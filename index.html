@@ -33,6 +33,12 @@
   #epLinks a { margin-right:10px; }
   .pill { display:inline-block; padding:1px 6px; border-radius:9px; font-size:11px; color:#fff; margin-right:2px; }
   canvas { max-height:340px; }
+  .post-tip { margin:10px 0 0; padding:10px 12px; border:1px solid var(--line); border-radius:8px; background:#f7f9fb; min-height:4.6em; }
+  .post-tip h3 { margin:0 0 6px; font-size:14px; }
+  .post-tip .plats { display:flex; flex-wrap:wrap; gap:6px 16px; margin:0 0 6px; }
+  .post-tip .plat { display:flex; align-items:center; gap:6px; }
+  .post-tip .swatch { width:10px; height:10px; border-radius:2px; flex:none; }
+  .post-tip ul { margin:4px 0 0; padding-left:18px; }
 </style>
 </head>
 <body>
@@ -49,6 +55,7 @@
 
   <section id="postWeekSection"><h2>Views by posting week, by platform <span class="muted" style="font-weight:400">(Interpreting Interpreter episodes, current views)</span></h2>
     <div style="position:relative;height:360px"><canvas id="postChart" style="max-height:none"></canvas></div>
+    <div id="postTip" class="post-tip muted">Hover a week to see its episodes and per-platform views.</div>
     <p class="muted" id="postNote"></p></section>
 
   <section><h2>Newest episodes: early performance</h2><div class="scroll" style="max-height:none"><table id="newTable"></table></div>
@@ -139,20 +146,34 @@ function postWeekChart() {
   const labels = weeks.map(w => shortDay(w.fri, true));
   const ds = PW_PLATFORMS.map(p => ({label: LABEL[p] + (p === "x" ? " (impressions)" : ""), plat: p,
     data: weeks.map(w => w.views[p]), backgroundColor: COLOR[p], borderWidth: 0, stack: "views"}));
+  const tip = document.getElementById("postTip");
+  const tipIdle = () => { tip.className = "post-tip muted"; tip.textContent = "Hover a week to see its episodes and per-platform views."; };
+  let tipIdx = -1;
+  const showWeekTip = w => {
+    const plats = PW_PLATFORMS.filter(p => w.views[p] > 0).map(p =>
+      `<span class="plat"><span class="swatch" style="background:${COLOR[p]}"></span>${esc(LABEL[p] + (p === "x" ? " (impressions)" : ""))}: <b>${w.views[p].toLocaleString()}</b></span>`).join("");
+    const eps = w.episodes.length
+      ? `<div class="muted">Total: <b>${w.total.toLocaleString()}</b></div><ul>${w.episodes.map(e =>
+          `<li><a href="#ep=${encodeURIComponent(e.key)}" data-key="${esc(e.key)}">${esc(e.name)}</a> (${e.first_posted}): ${e.total_views.toLocaleString()}</li>`).join("")}</ul>`
+      : `<p class="muted" style="margin:0">No episode posted this week</p>`;
+    tip.className = "post-tip";
+    tip.innerHTML = `<h3>Week of ${shortDay(w.start)} – ${shortDay(w.end, true)}</h3><div class="plats">${plats}</div>${eps}`;
+  };
+  tip.onclick = ev => { const a = ev.target.closest("a[data-key]"); if (a) { ev.preventDefault(); selectEp(a.dataset.key, true); } };
   new Chart(document.getElementById("postChart"), {type:"bar", data:{labels, datasets:ds},
     options:{responsive:true, maintainAspectRatio:false, interaction:{mode:"index", intersect:false},
       scales:{x:{stacked:true, ticks:{autoSkip:true, maxRotation:0}, title:{display:true, text:"Posting week (labelled by its Friday)"}},
               y:{stacked:true, beginAtZero:true, ticks:{callback:v => v.toLocaleString()}, title:{display:true, text:"Current views"}}},
-      plugins:{tooltip:{filter: c => c.raw > 0, callbacks:{
-        title: items => { const w = weeks[items[0].dataIndex]; return `Week of ${shortDay(w.start)} – ${shortDay(w.end, true)}`; },
-        label: c => `${c.dataset.label}: ${Number(c.raw).toLocaleString()}`,
-        footer: items => { const w = weeks[items[0].dataIndex];
-          if (!w.episodes.length) return ["No episode posted this week"];
-          return [`Total: ${w.total.toLocaleString()}`, ...w.episodes.map(e => `• ${e.name} (${e.first_posted}): ${e.total_views.toLocaleString()}`)]; }}}}}});
+      plugins:{tooltip:{enabled:false, external: ({tooltip: t}) => {
+        if (!t.opacity || !t.dataPoints.length) { tipIdx = -1; tipIdle(); return; }
+        const i = t.dataPoints[0].dataIndex;
+        if (i === tipIdx) return;
+        tipIdx = i; showWeekTip(weeks[i]);
+      }}}}});
   document.getElementById("postNote").textContent =
     `Each episode's current views (as of ${D.last_snapshot.replace("T"," ")}) are counted in the week it was first posted ` +
     `(earliest post date across platforms; weeks run Monday–Sunday and are labelled by their Friday, the usual release day). ` +
-    `So recent weeks have had less time to collect views. Hover a bar for its episodes and per-platform views. ` +
+    `So recent weeks have had less time to collect views. Hover a week to see its episodes and per-platform views below the chart. ` +
     `Instagram isn't shown (no public view counts); X figures are impressions.` +
     (undated.length ? ` ${undated.length} episode(s) without a known post date aren't shown: ${undated.map(e => e.name).join(", ")}.` : "");
 }
