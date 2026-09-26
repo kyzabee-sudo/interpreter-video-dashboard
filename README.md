@@ -8,7 +8,7 @@ TikTok, YouTube, X, Instagram and Facebook, with a focus on the *Interpreting In
   collection run and committed here. Contains only public view/like/comment counts and public post URLs.
 
 Features: platform totals, series vs. non-series, a sortable/searchable episode table (per-platform views/likes/comments and totals),
-total views over time per platform, per-episode trend (click a row, or link with `#ep=<series key>`), newest episodes' early
+views by posting week (each episode's current views assigned to its first post date, weekly bars stacked by platform), per-episode trend (click a row, or link with `#ep=<series key>`), newest episodes' early
 performance, last-updated time, and notes on data limits.
 
 Hosting: GitHub Pages, "Deploy from a branch", branch `main`, folder `/ (root)`.

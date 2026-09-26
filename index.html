@@ -44,12 +44,12 @@
 <main>
   <section><h2>Totals by platform <span class="muted" style="font-weight:400">(latest numbers per video)</span></h2><div class="cards" id="platformCards"></div></section>
 
-  <div class="grid2">
-    <section><h2>Interpreting Interpreter vs. everything else</h2><table id="groupTable"></table>
-      <p class="muted">Views summed across platforms (mixes plays, impressions and background counts; see notes).</p></section>
-    <section><h2>Total views over time, by platform</h2><canvas id="timeChart"></canvas>
-      <p class="muted" id="timeNote"></p></section>
-  </div>
+  <section><h2>Interpreting Interpreter vs. everything else</h2><table id="groupTable" style="width:auto;min-width:60%"></table>
+    <p class="muted">Views summed across platforms (mixes plays, impressions and background counts; see notes).</p></section>
+
+  <section id="postWeekSection"><h2>Views by posting week, by platform <span class="muted" style="font-weight:400">(Interpreting Interpreter episodes, current views)</span></h2>
+    <div style="position:relative;height:360px"><canvas id="postChart" style="max-height:none"></canvas></div>
+    <p class="muted" id="postNote"></p></section>
 
   <section><h2>Newest episodes: early performance</h2><div class="scroll" style="max-height:none"><table id="newTable"></table></div>
     <p class="muted">Age is days since the first platform posted it. "Change" is total views gained since the previous snapshot.</p></section>
@@ -100,20 +100,61 @@ function render() {
   const g = D.groups, row = (n, x) => `<tr><td>${n}</td><td>${fmt(x.videos)}</td><td>${fmt(x.views)}</td><td>${fmt(x.likes)}</td><td>${fmt(x.comments)}</td><td>${fmt(x.videos ? Math.round(x.views/x.videos) : null)}</td></tr>`;
   document.getElementById("groupTable").innerHTML = `<thead><tr><th class="l">Group</th><th>Videos</th><th>Views</th><th>Likes</th><th>Comments</th><th>Views / video</th></tr></thead>
     <tbody>${row("Interpreting Interpreter", g.series)}${row("Everything else", g.other)}</tbody>`;
-  buildCols(); timeChart(); newTable(); epTable();
+  buildCols(); postWeekChart(); newTable(); epTable();
   const h = decodeURIComponent(location.hash || ""); if (h.startsWith("#ep=")) selectEp(h.slice(4), true);
   document.getElementById("notes").innerHTML = D.notes.map(n => `<li>${esc(n)}</li>`).join("");
 }
 
-function timeChart() {
-  const labels = D.timeline.map(t => t.time.replace("T"," "));
-  const ds = P.filter(p => has(p,"views")).map(p => ({label: LABEL[p], data: D.timeline.map(t => t.platforms[p]?.views ?? null),
-    borderColor: COLOR[p], backgroundColor: COLOR[p], tension: .2, pointRadius: 4}));
-  new Chart(document.getElementById("timeChart"), {type:"line", data:{labels, datasets:ds},
-    options:{responsive:true, interaction:{mode:"index", intersect:false}, scales:{y:{beginAtZero:true, ticks:{callback:v => v.toLocaleString()}}},
-      plugins:{tooltip:{callbacks:{label:c => `${c.dataset.label}: ${Number(c.raw).toLocaleString()}`}}}}});
-  document.getElementById("timeNote").textContent = D.timeline.length < 2 ? "Only one snapshot so far; the lines fill in as weekly snapshots accumulate." :
-    "Jumps can reflect coverage changes (e.g. Facebook reels were first fully listed on 2026-09-26 07:11; X coverage depth varies by run), not only new views.";
+// "Views by posting week": each episode's CURRENT views (latest snapshot) are assigned to the week it was first posted
+// (earliest post date across platforms = episode.first_posted), summed per Monday-Sunday week and stacked by platform.
+const PW_PLATFORMS = ["facebook","x","tiktok","youtube"];   // Instagram has no public view counts
+const DAY = 864e5;
+const isoDay = d => d.toISOString().slice(0,10);
+const shortDay = (d, yr) => d.toLocaleDateString("en-CA", {timeZone:"UTC", month:"short", day:"numeric", ...(yr ? {year:"numeric"} : {})});
+function postWeeks(episodes) {
+  const byWeek = new Map(); let undated = [];
+  for (const e of episodes) {
+    if (!e.first_posted) { undated.push(e); continue; }
+    const d = new Date(e.first_posted + "T00:00:00Z");
+    const mon = new Date(d.getTime() - ((d.getUTCDay() + 6) % 7) * DAY), k = isoDay(mon);
+    if (!byWeek.has(k)) byWeek.set(k, {start: mon, views: Object.fromEntries(PW_PLATFORMS.map(p => [p, 0])), episodes: []});
+    const w = byWeek.get(k);
+    PW_PLATFORMS.forEach(p => { w.views[p] += e.platforms[p]?.views || 0; });
+    w.episodes.push(e);
+  }
+  const keys = [...byWeek.keys()].sort(), weeks = [];
+  if (keys.length) {   // continuous weekly axis, so weeks without an episode show as gaps
+    for (let t = new Date(keys[0] + "T00:00:00Z"); isoDay(t) <= keys[keys.length-1]; t = new Date(t.getTime() + 7*DAY)) {
+      weeks.push(byWeek.get(isoDay(t)) || {start: t, views: Object.fromEntries(PW_PLATFORMS.map(p => [p, 0])), episodes: []});
+    }
+  }
+  weeks.forEach(w => { w.fri = new Date(w.start.getTime() + 4*DAY); w.end = new Date(w.start.getTime() + 6*DAY);
+    w.total = PW_PLATFORMS.reduce((a, p) => a + w.views[p], 0);
+    w.episodes.sort((a, b) => a.first_posted.localeCompare(b.first_posted)); });
+  return {weeks, undated};
+}
+
+function postWeekChart() {
+  const {weeks, undated} = postWeeks(D.episodes);
+  const labels = weeks.map(w => shortDay(w.fri, true));
+  const ds = PW_PLATFORMS.map(p => ({label: LABEL[p] + (p === "x" ? " (impressions)" : ""), plat: p,
+    data: weeks.map(w => w.views[p]), backgroundColor: COLOR[p], borderWidth: 0, stack: "views"}));
+  new Chart(document.getElementById("postChart"), {type:"bar", data:{labels, datasets:ds},
+    options:{responsive:true, maintainAspectRatio:false, interaction:{mode:"index", intersect:false},
+      scales:{x:{stacked:true, ticks:{autoSkip:true, maxRotation:0}, title:{display:true, text:"Posting week (labelled by its Friday)"}},
+              y:{stacked:true, beginAtZero:true, ticks:{callback:v => v.toLocaleString()}, title:{display:true, text:"Current views"}}},
+      plugins:{tooltip:{filter: c => c.raw > 0, callbacks:{
+        title: items => { const w = weeks[items[0].dataIndex]; return `Week of ${shortDay(w.start)} – ${shortDay(w.end, true)}`; },
+        label: c => `${c.dataset.label}: ${Number(c.raw).toLocaleString()}`,
+        footer: items => { const w = weeks[items[0].dataIndex];
+          if (!w.episodes.length) return ["No episode posted this week"];
+          return [`Total: ${w.total.toLocaleString()}`, ...w.episodes.map(e => `• ${e.name} (${e.first_posted}): ${e.total_views.toLocaleString()}`)]; }}}}}});
+  document.getElementById("postNote").textContent =
+    `Each episode's current views (as of ${D.last_snapshot.replace("T"," ")}) are counted in the week it was first posted ` +
+    `(earliest post date across platforms; weeks run Monday–Sunday and are labelled by their Friday, the usual release day). ` +
+    `So recent weeks have had less time to collect views. Hover a bar for its episodes and per-platform views. ` +
+    `Instagram isn't shown (no public view counts); X figures are impressions.` +
+    (undated.length ? ` ${undated.length} episode(s) without a known post date aren't shown: ${undated.map(e => e.name).join(", ")}.` : "");
 }
 
 function ageDays(e) { return e.first_posted ? Math.floor((new Date(D.last_snapshot) - new Date(e.first_posted + "T00:00")) / 864e5) : null; }
