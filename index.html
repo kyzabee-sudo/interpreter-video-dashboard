@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Interpreter Foundation Video Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<style>
+  :root { --bg:#f5f7fa; --card:#fff; --ink:#1d2733; --mute:#66727f; --line:#dde3ea; --acc:#1f4e78; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--ink); }
+  header { background:var(--acc); color:#fff; padding:18px 24px; }
+  header h1 { margin:0; font-size:22px; } header p { margin:4px 0 0; opacity:.85; }
+  main { max-width:1280px; margin:0 auto; padding:16px 20px 40px; }
+  section { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px 18px; margin:16px 0; }
+  h2 { font-size:17px; margin:0 0 12px; }
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px; }
+  .card { border:1px solid var(--line); border-radius:8px; padding:12px; border-top:4px solid var(--c,#999); }
+  .card h3 { margin:0 0 6px; font-size:15px; } .big { font-size:22px; font-weight:700; }
+  .kv { display:flex; justify-content:space-between; color:var(--mute); } .kv b { color:var(--ink); font-weight:600; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:16px; } @media (max-width:900px){ .grid2 { grid-template-columns:1fr; } }
+  table { border-collapse:collapse; width:100%; font-size:13px; }
+  th, td { padding:5px 7px; border-bottom:1px solid var(--line); text-align:right; white-space:nowrap; }
+  th:first-child, td:first-child, th.l, td.l { text-align:left; }
+  th { background:#eef2f6; position:sticky; top:0; cursor:pointer; user-select:none; }
+  th.sorted-asc::after { content:" ▲"; } th.sorted-desc::after { content:" ▼"; }
+  tbody tr:hover { background:#f2f7fc; cursor:pointer; } tr.sel { background:#dcebf8 !important; }
+  .scroll { max-height:560px; overflow:auto; border:1px solid var(--line); border-radius:6px; }
+  input[type=search] { padding:7px 10px; width:320px; max-width:100%; border:1px solid var(--line); border-radius:6px; font:inherit; }
+  .muted { color:var(--mute); } .na { color:#b0b8c1; }
+  .grp th.gh { text-align:center; background:#e3eaf2; cursor:default; }
+  ul.notes li { margin:4px 0; } a { color:var(--acc); }
+  #epLinks a { margin-right:10px; }
+  .pill { display:inline-block; padding:1px 6px; border-radius:9px; font-size:11px; color:#fff; margin-right:2px; }
+  canvas { max-height:340px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Interpreter Foundation Video Dashboard</h1>
+  <p>Public engagement metrics across TikTok, YouTube, X, Instagram and Facebook, with a focus on the <em>Interpreting Interpreter</em> series.
+     <span id="updated"></span></p>
+</header>
+<main>
+  <section><h2>Totals by platform <span class="muted" style="font-weight:400">(latest numbers per video)</span></h2><div class="cards" id="platformCards"></div></section>
+
+  <div class="grid2">
+    <section><h2>Interpreting Interpreter vs. everything else</h2><table id="groupTable"></table>
+      <p class="muted">Views summed across platforms (mixes plays, impressions and background counts; see notes).</p></section>
+    <section><h2>Total views over time, by platform</h2><canvas id="timeChart"></canvas>
+      <p class="muted" id="timeNote"></p></section>
+  </div>
+
+  <section><h2>Newest episodes: early performance</h2><div class="scroll" style="max-height:none"><table id="newTable"></table></div>
+    <p class="muted">Age is days since the first platform posted it. "Change" is total views gained since the previous snapshot.</p></section>
+
+  <section>
+    <h2>Interpreting Interpreter episodes</h2>
+    <p><input type="search" id="search" placeholder="Search episodes…"> <span class="muted" id="epCount"></span>
+       <span class="muted"> · Click a column to sort, a row to see its trend.</span></p>
+    <div class="scroll"><table id="epTable" class="grp"></table></div>
+  </section>
+
+  <section id="epDetail"><h2 id="epTitle">Episode trend</h2><p class="muted" id="epHint">Select an episode in the table above.</p>
+    <div id="epLinks"></div><canvas id="epChart"></canvas></section>
+
+  <section><h2>Notes on the data</h2><ul class="notes" id="notes"></ul></section>
+  <p class="muted">Data: <a href="data/dashboard.json">data/dashboard.json</a> · generated <span id="gen"></span></p>
+</main>
+<script>
+const P = ["tiktok","youtube","x","instagram","facebook"];
+const LABEL = {tiktok:"TikTok", youtube:"YouTube", x:"X", instagram:"Instagram", facebook:"Facebook"};
+const COLOR = {tiktok:"#111111", youtube:"#e62117", x:"#1d9bf0", instagram:"#c13584", facebook:"#1877f2", total:"#2e7d32"};
+const fmt = v => (v === null || v === undefined) ? '<span class="na">–</span>' : Number(v).toLocaleString();
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const dtf = s => new Date(s).toLocaleString("en-CA", {year:"numeric", month:"short", day:"numeric", hour:"2-digit", minute:"2-digit"});
+let D, epChart;
+
+fetch("data/dashboard.json", {cache:"no-store"}).then(r => r.json()).then(d => { D = d; render(); })
+  .catch(e => { document.querySelector("main").insertAdjacentHTML("afterbegin", `<section>Could not load data: ${esc(e)}</section>`); });
+
+function has(p, m) { return (D.metrics_available[p] || []).includes(m); }
+
+function render() {
+  document.getElementById("updated").textContent = ` Last updated ${D.last_snapshot.replace("T"," ")} (${D.timezone}) · ${D.runs.length} snapshots.`;
+  document.getElementById("gen").textContent = D.generated_at;
+  // platform cards
+  document.getElementById("platformCards").innerHTML = P.map(p => {
+    const v = D.platforms[p]; if (!v) return "";
+    const m = k => has(p,k) ? fmt(v[k]) : '<span class="na">n/a</span>';
+    return `<div class="card" style="--c:${COLOR[p]}"><h3>${LABEL[p]}</h3>
+      <div class="big">${has(p,"views") ? fmt(v.views) : '<span class="na">n/a</span>'}</div><div class="muted">${p==="x"?"impressions":"views"}</div>
+      <div class="kv"><span>Videos</span><b>${fmt(v.videos)}</b></div>
+      <div class="kv"><span>${p==="facebook"?"Reactions":"Likes"}</span><b>${m("likes")}</b></div>
+      <div class="kv"><span>Comments</span><b>${m("comments")}</b></div>
+      <div class="kv"><span>Series videos</span><b>${fmt(v.series_videos)}</b></div>
+      <div class="kv"><span>Series ${p==="x"?"impr.":"views"}</span><b>${has(p,"views") ? fmt(v.series_views) : '<span class="na">n/a</span>'}</b></div></div>`;
+  }).join("");
+  // groups
+  const g = D.groups, row = (n, x) => `<tr><td>${n}</td><td>${fmt(x.videos)}</td><td>${fmt(x.views)}</td><td>${fmt(x.likes)}</td><td>${fmt(x.comments)}</td><td>${fmt(x.videos ? Math.round(x.views/x.videos) : null)}</td></tr>`;
+  document.getElementById("groupTable").innerHTML = `<thead><tr><th class="l">Group</th><th>Videos</th><th>Views</th><th>Likes</th><th>Comments</th><th>Views / video</th></tr></thead>
+    <tbody>${row("Interpreting Interpreter", g.series)}${row("Everything else", g.other)}</tbody>`;
+  buildCols(); timeChart(); newTable(); epTable();
+  const h = decodeURIComponent(location.hash || ""); if (h.startsWith("#ep=")) selectEp(h.slice(4), true);
+  document.getElementById("notes").innerHTML = D.notes.map(n => `<li>${esc(n)}</li>`).join("");
+}
+
+function timeChart() {
+  const labels = D.timeline.map(t => t.time.replace("T"," "));
+  const ds = P.filter(p => has(p,"views")).map(p => ({label: LABEL[p], data: D.timeline.map(t => t.platforms[p]?.views ?? null),
+    borderColor: COLOR[p], backgroundColor: COLOR[p], tension: .2, pointRadius: 4}));
+  new Chart(document.getElementById("timeChart"), {type:"line", data:{labels, datasets:ds},
+    options:{responsive:true, interaction:{mode:"index", intersect:false}, scales:{y:{beginAtZero:true, ticks:{callback:v => v.toLocaleString()}}},
+      plugins:{tooltip:{callbacks:{label:c => `${c.dataset.label}: ${Number(c.raw).toLocaleString()}`}}}}});
+  document.getElementById("timeNote").textContent = D.timeline.length < 2 ? "Only one snapshot so far; the lines fill in as weekly snapshots accumulate." :
+    "Jumps can reflect coverage changes (e.g. Facebook reels were first fully listed on 2026-09-26 07:11; X coverage depth varies by run), not only new views.";
+}
+
+function ageDays(e) { return e.first_posted ? Math.floor((new Date(D.last_snapshot) - new Date(e.first_posted + "T00:00")) / 864e5) : null; }
+
+function newTable() {
+  const eps = D.episodes.filter(e => e.first_posted).sort((a,b) => b.first_posted.localeCompare(a.first_posted)).slice(0, 8);
+  const cols = P.filter(p => has(p,"views"));
+  document.getElementById("newTable").innerHTML = `<thead><tr><th class="l">Episode</th><th>First posted</th><th>Age (days)</th>${cols.map(p=>`<th>${LABEL[p]}</th>`).join("")}<th>Total views</th><th>Views / day</th><th>Change</th></tr></thead><tbody>` +
+    eps.map(e => { const a = ageDays(e), t = e.trend, ch = t.length > 1 ? t[t.length-1].total_views - t[t.length-2].total_views : null;
+      return `<tr data-key="${esc(e.key)}"><td>${esc(e.name)}</td><td>${e.first_posted}</td><td>${fmt(a)}</td>${cols.map(p=>`<td>${fmt(e.platforms[p]?.views)}</td>`).join("")}<td><b>${fmt(e.total_views)}</b></td><td>${fmt(a ? Math.round(e.total_views/Math.max(a,1)) : e.total_views)}</td><td>${ch===null?fmt(null):(ch>=0?"+":"")+ch.toLocaleString()}</td></tr>`; }).join("") + "</tbody>";
+  document.querySelectorAll("#newTable tbody tr").forEach(tr => tr.onclick = () => selectEp(tr.dataset.key, true));
+}
+
+let EPCOLS = [];
+function buildCols() {
+  EPCOLS = [
+  {k:"name", l:"Episode", s:e=>e.name.toLowerCase(), f:e=>esc(e.name), cls:"l"},
+  {k:"first", l:"First posted", s:e=>e.first_posted||"", f:e=>e.first_posted||fmt(null)},
+  {k:"np", l:"Platforms", s:e=>Object.keys(e.platforms).length, f:e=>P.filter(p=>e.platforms[p]).map(p=>`<span class="pill" style="background:${COLOR[p]}" title="${LABEL[p]}">${LABEL[p][0]}</span>`).join(""), cls:"l"},
+];
+P.forEach(p => ["views","likes","comments"].filter(m => has(p,m)).forEach(m =>
+  EPCOLS.push({k:p+m, l:m[0].toUpperCase()+m.slice(1), grp:p, s:e=>e.platforms[p]?.[m] ?? -1, f:e=>fmt(e.platforms[p]?.[m])})));
+["views","likes","comments"].forEach(m => EPCOLS.push({k:"t"+m, l:m[0].toUpperCase()+m.slice(1), grp:"total", s:e=>e["total_"+m], f:e=>(m==="views"?"<b>":"")+fmt(e["total_"+m])+(m==="views"?"</b>":"")}));
+}
+let sortKey = "tviews", sortDir = -1, selected = null;
+
+function epTable() {
+  const q = document.getElementById("search").value.trim().toLowerCase();
+  const col = EPCOLS.find(c => c.k === sortKey);
+  const rows = D.episodes.filter(e => !q || e.name.toLowerCase().includes(q)).sort((a,b) => { const x = col.s(a), y = col.s(b); return (x > y ? 1 : x < y ? -1 : 0) * sortDir; });
+  const groups = []; EPCOLS.forEach(c => { const g = c.grp || ""; if (groups.length && groups[groups.length-1].g === g) groups[groups.length-1].n++; else groups.push({g, n:1}); });
+  const gh = groups.map(x => `<th class="gh" colspan="${x.n}">${x.g ? (x.g==="total" ? "All platforms" : LABEL[x.g]) : ""}</th>`).join("");
+  const hh = EPCOLS.map(c => `<th data-k="${c.k}" class="${c.cls||""} ${c.k===sortKey ? (sortDir>0?"sorted-asc":"sorted-desc") : ""}">${c.l}</th>`).join("");
+  document.getElementById("epTable").innerHTML = `<thead><tr>${gh}</tr><tr>${hh}</tr></thead><tbody>` +
+    rows.map(e => `<tr data-key="${esc(e.key)}" class="${e.key===selected?"sel":""}">${EPCOLS.map(c => `<td class="${c.cls||""}">${c.f(e)}</td>`).join("")}</tr>`).join("") + "</tbody>";
+  document.getElementById("epCount").textContent = `${rows.length} of ${D.episodes.length} episodes`;
+  document.querySelectorAll("#epTable th[data-k]").forEach(th => th.onclick = () => { const k = th.dataset.k; sortDir = (k === sortKey) ? -sortDir : (k==="name" ? 1 : -1); sortKey = k; epTable(); });
+  document.querySelectorAll("#epTable tbody tr").forEach(tr => tr.onclick = () => selectEp(tr.dataset.key, false));
+}
+document.getElementById("search").addEventListener("input", epTable);
+
+function selectEp(key, scroll) {
+  selected = key; epTable(); history.replaceState(null, "", "#ep=" + encodeURIComponent(key));
+  const e = D.episodes.find(x => x.key === key); if (!e) return;
+  document.getElementById("epTitle").textContent = `Episode trend: ${e.name}`;
+  document.getElementById("epHint").textContent = `First posted ${e.first_posted || "unknown"} · total views ${e.total_views.toLocaleString()} · ${e.trend.length} snapshot(s)` +
+    (e.trend.length < 2 ? " (trend lines fill in as more snapshots are collected)" : "");
+  document.getElementById("epLinks").innerHTML = P.filter(p => e.platforms[p]).map(p => e.platforms[p].urls.map((u,i) => `<a href="${esc(u)}" target="_blank" rel="noopener">${LABEL[p]}${e.platforms[p].urls.length>1?" "+(i+1):""}</a>`).join("")).join("");
+  const labels = e.trend.map(t => t.time.replace("T"," "));
+  const ds = P.filter(p => has(p,"views") && e.trend.some(t => t.platforms[p]?.views != null)).map(p => ({label: LABEL[p], data: e.trend.map(t => t.platforms[p]?.views ?? null), borderColor: COLOR[p], backgroundColor: COLOR[p], tension:.2, pointRadius:4, spanGaps:true}));
+  ds.push({label:"Total", data:e.trend.map(t => t.total_views), borderColor:COLOR.total, backgroundColor:COLOR.total, borderDash:[6,4], tension:.2, pointRadius:4});
+  if (epChart) epChart.destroy();
+  epChart = new Chart(document.getElementById("epChart"), {type:"line", data:{labels, datasets:ds},
+    options:{responsive:true, interaction:{mode:"index", intersect:false}, scales:{y:{beginAtZero:true, ticks:{callback:v => v.toLocaleString()}}}}});
+  if (scroll) document.getElementById("epDetail").scrollIntoView({behavior:"smooth"});
+}
+</script>
+</body>
+</html>
