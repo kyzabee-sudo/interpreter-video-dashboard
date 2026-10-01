@@ -39,30 +39,56 @@
   .post-tip .plat { display:flex; align-items:center; gap:6px; }
   .post-tip .swatch { width:10px; height:10px; border-radius:2px; flex:none; }
   .post-tip ul { margin:4px 0 0; padding-left:18px; }
+  .filters { position:sticky; top:0; z-index:8; display:flex; flex-wrap:wrap; gap:14px 20px; align-items:flex-end; }
+  .filters label { display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--mute); font-weight:600; }
+  .filters select, .filters input[type=date] { font:inherit; font-weight:400; color:var(--ink); padding:7px 10px; border:1px solid var(--line); border-radius:6px; min-width:220px; background:#fff; }
+  .filters .dates { display:flex; gap:8px; align-items:center; }
+  .filters .dates input { min-width:0; }
+  #customDates[hidden] { display:none !important; }
+  .filters .summary { margin-left:auto; font-weight:400; max-width:420px; text-align:right; }
+  @media (max-width:800px){ .filters .summary { margin-left:0; text-align:left; max-width:none; } }
 </style>
 </head>
 <body>
 <header>
   <h1>Interpreter Foundation Video Dashboard</h1>
-  <p>Public engagement metrics across TikTok, YouTube, X, Instagram and Facebook, with a focus on the <em>Interpreting Interpreter</em> series.
+  <p>Public engagement metrics across TikTok, YouTube, X, Instagram and Facebook.
      <span id="updated"></span></p>
 </header>
 <main>
-  <section><h2>Totals by platform <span class="muted" style="font-weight:400">(latest numbers per video)</span></h2><div class="cards" id="platformCards"></div></section>
+  <section class="filters" id="filterBar">
+    <label>Series
+      <select id="seriesSel"></select>
+    </label>
+    <label>Timeframe
+      <select id="tfSel"></select>
+    </label>
+    <label id="customDates" hidden>Posted
+      <span class="dates"><input type="date" id="tfFrom"> <span class="muted">to</span> <input type="date" id="tfTo"></span>
+    </label>
+    <p class="muted summary" id="filterSummary"></p>
+  </section>
+
+  <section><h2>Totals by platform <span class="muted" style="font-weight:400" id="cardHint">(latest numbers per video)</span></h2><div class="cards" id="platformCards"></div></section>
 
   <section><h2>Interpreting Interpreter vs. everything else</h2><table id="groupTable" style="width:auto;min-width:60%"></table>
-    <p class="muted">Views summed across platforms (mixes plays, impressions and background counts; see notes).</p></section>
+    <p class="muted">Snapshot totals for the latest collection run. Not affected by the timeframe selector. Views summed across platforms (mixes plays, impressions and background counts; see notes).</p></section>
 
-  <section id="postWeekSection"><h2>Views by posting week, by platform <span class="muted" style="font-weight:400">(Interpreting Interpreter episodes, current views)</span></h2>
+  <section id="otherOnly" hidden>
+    <h2>Per-video views</h2>
+    <p class="muted">Everything else is in the snapshot totals above (platform cards and the comparison table), but this export does not list those videos one-by-one. The posting-week chart, newest list, and episode table are available for <em>Interpreting Interpreter</em>.</p>
+  </section>
+
+  <section id="postWeekSection"><h2>Views by posting week, by platform <span class="muted" style="font-weight:400" id="postHead">(current views)</span></h2>
     <div style="position:relative;height:360px"><canvas id="postChart" style="max-height:none"></canvas></div>
     <div id="postTip" class="post-tip muted">Hover a week to see its episodes and per-platform views.</div>
     <p class="muted" id="postNote"></p></section>
 
-  <section><h2>Newest episodes: early performance</h2><div class="scroll" style="max-height:none"><table id="newTable"></table></div>
+  <section id="newSection"><h2>Newest episodes: early performance</h2><div class="scroll" style="max-height:none"><table id="newTable"></table></div>
     <p class="muted">Age is days since the first platform posted it. "Change" is total views gained since the previous snapshot.</p></section>
 
-  <section>
-    <h2>Interpreting Interpreter episodes</h2>
+  <section id="epTableSection">
+    <h2 id="epHead">Episodes</h2>
     <p><input type="search" id="search" placeholder="Search episodes…"> <span class="muted" id="epCount"></span>
        <span class="muted"> · Click a column to sort, a row to see its trend.</span></p>
     <div class="scroll"><table id="epTable" class="grp"></table></div>
@@ -81,35 +107,161 @@ const COLOR = {tiktok:"#111111", youtube:"#e62117", x:"#1d9bf0", instagram:"#c13
 const fmt = v => (v === null || v === undefined) ? '<span class="na">–</span>' : Number(v).toLocaleString();
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const dtf = s => new Date(s).toLocaleString("en-CA", {year:"numeric", month:"short", day:"numeric", hour:"2-digit", minute:"2-digit"});
-let D, epChart;
+const SERIES = [
+  {id:"all", label:"All videos"},
+  {id:"ii", label:"Interpreting Interpreter"},
+  {id:"other", label:"Everything else"},
+];
+const TF = [
+  {id:"all", label:"All time"},
+  {id:"30d", label:"Last 30 days"},
+  {id:"90d", label:"Last 90 days"},
+  {id:"1y", label:"Last 12 months"},
+];
+let D, epChart, postChart;
+let seriesSel = "ii", tfSel = "all", tfFrom = "", tfTo = "";
 
 fetch("data/dashboard.json", {cache:"no-store"}).then(r => r.json()).then(d => { D = d; render(); })
   .catch(e => { document.querySelector("main").insertAdjacentHTML("afterbegin", `<section>Could not load data: ${esc(e)}</section>`); });
 
 function has(p, m) { return (D.metrics_available[p] || []).includes(m); }
+function snapshotDay() { return D.last_snapshot.slice(0, 10); }
+function addDays(iso, n) {
+  const d = new Date(iso + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+function seriesLabel(id) { return (SERIES.find(s => s.id === id) || SERIES[1]).label; }
+
+function readParams() {
+  const q = new URLSearchParams(location.search);
+  const s = q.get("series"); if (SERIES.some(x => x.id === s)) seriesSel = s;
+  const t = q.get("tf"); if (t) tfSel = t;
+  tfFrom = q.get("from") || ""; tfTo = q.get("to") || "";
+}
+function writeParams() {
+  const url = new URL(location.href);
+  const q = url.searchParams;
+  seriesSel === "ii" ? q.delete("series") : q.set("series", seriesSel);
+  tfSel === "all" ? q.delete("tf") : q.set("tf", tfSel);
+  if (tfSel === "custom") { if (tfFrom) q.set("from", tfFrom); else q.delete("from"); if (tfTo) q.set("to", tfTo); else q.delete("to"); }
+  else { q.delete("from"); q.delete("to"); }
+  history.replaceState(null, "", url);
+}
+
+function timeframeBounds() {
+  const end = snapshotDay();
+  if (tfSel === "all" || seriesSel === "other") return {from:null, to:null};
+  if (tfSel === "30d") return {from: addDays(end, -29), to:end};
+  if (tfSel === "90d") return {from: addDays(end, -89), to:end};
+  if (tfSel === "1y") return {from: addDays(end, -364), to:end};
+  if (/^\d{4}$/.test(tfSel)) return {from: tfSel + "-01-01", to: tfSel + "-12-31"};
+  if (tfSel === "custom") return {from: tfFrom || null, to: tfTo || null};
+  return {from:null, to:null};
+}
+function inTimeframe(e) {
+  const {from, to} = timeframeBounds();
+  if (!from && !to) return true;
+  if (!e.first_posted) return false;
+  if (from && e.first_posted < from) return false;
+  if (to && e.first_posted > to) return false;
+  return true;
+}
+function scopedEpisodes() { return seriesSel === "other" ? [] : D.episodes.filter(inTimeframe); }
+
+function otherPlat(p) {
+  const v = D.platforms[p]; if (!v) return null;
+  return {videos: v.videos - v.series_videos, views: v.views - v.series_views, likes: v.likes - v.series_likes, comments: v.comments - v.series_comments};
+}
+function episodePlatStats(eps) {
+  const out = Object.fromEntries(P.map(p => [p, {videos:0, views:0, likes:0, comments:0}]));
+  for (const e of eps) for (const p of P) {
+    const x = e.platforms[p]; if (!x) continue;
+    out[p].videos += 1;
+    out[p].views += x.views || 0;
+    out[p].likes += x.likes || 0;
+    out[p].comments += x.comments || 0;
+  }
+  return out;
+}
+
+function setupFilters() {
+  const years = [...new Set(D.episodes.map(e => (e.first_posted || "").slice(0,4)).filter(y => /^\d{4}$/.test(y)))].sort();
+  const tfOpts = [...TF, ...years.map(y => ({id:y, label:y})), {id:"custom", label:"Custom range"}];
+  const ss = document.getElementById("seriesSel"), ts = document.getElementById("tfSel");
+  ss.innerHTML = SERIES.map(s => `<option value="${s.id}">${s.label}</option>`).join("");
+  ts.innerHTML = tfOpts.map(s => `<option value="${s.id}">${s.label}</option>`).join("");
+  ss.value = seriesSel; ts.value = tfSel;
+  document.getElementById("tfFrom").value = tfFrom;
+  document.getElementById("tfTo").value = tfTo;
+  const syncCustom = () => { document.getElementById("customDates").hidden = tfSel !== "custom"; ts.disabled = seriesSel === "other"; };
+  syncCustom();
+  ss.onchange = () => { seriesSel = ss.value; writeParams(); applyFilters(); };
+  ts.onchange = () => { tfSel = ts.value; writeParams(); applyFilters(); };
+  document.getElementById("tfFrom").onchange = ev => { tfFrom = ev.target.value; writeParams(); applyFilters(); };
+  document.getElementById("tfTo").onchange = ev => { tfTo = ev.target.value; writeParams(); applyFilters(); };
+}
 
 function render() {
+  readParams();
   document.getElementById("updated").textContent = ` Last updated ${D.last_snapshot.replace("T"," ")} (${D.timezone}) · ${D.runs.length} snapshots.`;
   document.getElementById("gen").textContent = D.generated_at;
-  // platform cards
-  document.getElementById("platformCards").innerHTML = P.map(p => {
-    const v = D.platforms[p]; if (!v) return "";
-    const m = k => has(p,k) ? fmt(v[k]) : '<span class="na">n/a</span>';
-    return `<div class="card" style="--c:${COLOR[p]}"><h3>${LABEL[p]}</h3>
-      <div class="big">${has(p,"views") ? fmt(v.views) : '<span class="na">n/a</span>'}</div><div class="muted">${p==="x"?"impressions":"views"}</div>
-      <div class="kv"><span>Videos</span><b>${fmt(v.videos)}</b></div>
-      <div class="kv"><span>${p==="facebook"?"Reactions":"Likes"}</span><b>${m("likes")}</b></div>
-      <div class="kv"><span>Comments</span><b>${m("comments")}</b></div>
-      <div class="kv"><span>Series videos</span><b>${fmt(v.series_videos)}</b></div>
-      <div class="kv"><span>Series ${p==="x"?"impr.":"views"}</span><b>${has(p,"views") ? fmt(v.series_views) : '<span class="na">n/a</span>'}</b></div></div>`;
-  }).join("");
-  // groups
   const g = D.groups, row = (n, x) => `<tr><td>${n}</td><td>${fmt(x.videos)}</td><td>${fmt(x.views)}</td><td>${fmt(x.likes)}</td><td>${fmt(x.comments)}</td><td>${fmt(x.videos ? Math.round(x.views/x.videos) : null)}</td></tr>`;
   document.getElementById("groupTable").innerHTML = `<thead><tr><th class="l">Group</th><th>Videos</th><th>Views</th><th>Likes</th><th>Comments</th><th>Views / video</th></tr></thead>
     <tbody>${row("Interpreting Interpreter", g.series)}${row("Everything else", g.other)}</tbody>`;
-  buildCols(); postWeekChart(); newTable(); epTable();
-  const h = decodeURIComponent(location.hash || ""); if (h.startsWith("#ep=")) selectEp(h.slice(4), true);
   document.getElementById("notes").innerHTML = D.notes.map(n => `<li>${esc(n)}</li>`).join("");
+  buildCols(); setupFilters(); applyFilters();
+  const h = decodeURIComponent(location.hash || ""); if (h.startsWith("#ep=")) selectEp(h.slice(4), true);
+}
+
+function applyFilters() {
+  document.getElementById("customDates").hidden = tfSel !== "custom";
+  document.getElementById("tfSel").disabled = seriesSel === "other";
+  const itemized = seriesSel !== "other";
+  document.getElementById("otherOnly").hidden = itemized;
+  document.getElementById("postWeekSection").hidden = !itemized;
+  document.getElementById("newSection").hidden = !itemized;
+  document.getElementById("epTableSection").hidden = !itemized;
+  document.getElementById("epDetail").hidden = !itemized;
+  platformCards();
+  const eps = scopedEpisodes();
+  const {from, to} = timeframeBounds();
+  const tfTxt = seriesSel === "other" ? "all time (other videos are not dated in this export)"
+    : tfSel === "all" ? "all time"
+    : (from && to ? `${from} to ${to}` : from ? `since ${from}` : `through ${to}`);
+  document.getElementById("filterSummary").textContent = !itemized
+    ? `${seriesLabel(seriesSel)} · snapshot totals · ${tfTxt}`
+    : seriesSel === "all"
+      ? `All videos · ${eps.length} Interpreting Interpreter episode${eps.length===1?"":"s"} listed · posted ${tfTxt}`
+      : `Interpreting Interpreter · ${eps.length} episode${eps.length===1?"":"s"} · posted ${tfTxt}`;
+  document.getElementById("postHead").textContent = "Interpreting Interpreter, current views";
+  document.getElementById("epHead").textContent = "Interpreting Interpreter episodes";
+  if (itemized) { postWeekChart(); newTable(); epTable(); }
+  else if (postChart) { postChart.destroy(); postChart = null; }
+}
+
+function platformCards() {
+  const allTime = tfSel === "all" || seriesSel === "other";
+  const stats = seriesSel === "other" ? Object.fromEntries(P.map(p => [p, otherPlat(p)]))
+    : seriesSel === "ii" ? episodePlatStats(scopedEpisodes())
+    : allTime ? D.platforms : episodePlatStats(scopedEpisodes());
+  document.getElementById("cardHint").textContent = seriesSel === "other"
+    ? "(latest snapshot, everything except Interpreting Interpreter)"
+    : seriesSel === "all" && allTime ? "(latest numbers per video)"
+    : "(Interpreting Interpreter episodes in this timeframe)";
+  document.getElementById("platformCards").innerHTML = P.map(p => {
+    const v = stats[p]; if (!v) return "";
+    const src = seriesSel === "all" && allTime ? D.platforms[p] : v;
+    const m = k => has(p,k) ? fmt(src[k]) : '<span class="na">n/a</span>';
+    const extra = seriesSel === "all" && allTime ? `
+      <div class="kv"><span>Series videos</span><b>${fmt(src.series_videos)}</b></div>
+      <div class="kv"><span>Series ${p==="x"?"impr.":"views"}</span><b>${has(p,"views") ? fmt(src.series_views) : '<span class="na">n/a</span>'}</b></div>` : "";
+    return `<div class="card" style="--c:${COLOR[p]}"><h3>${LABEL[p]}</h3>
+      <div class="big">${has(p,"views") ? fmt(src.views) : '<span class="na">n/a</span>'}</div><div class="muted">${p==="x"?"impressions":"views"}</div>
+      <div class="kv"><span>Videos</span><b>${fmt(src.videos)}</b></div>
+      <div class="kv"><span>${p==="facebook"?"Reactions":"Likes"}</span><b>${m("likes")}</b></div>
+      <div class="kv"><span>Comments</span><b>${m("comments")}</b></div>${extra}</div>`;
+  }).join("");
 }
 
 // "Views by posting week": each episode's CURRENT views (latest snapshot) are assigned to the week it was first posted
@@ -142,12 +294,18 @@ function postWeeks(episodes) {
 }
 
 function postWeekChart() {
-  const {weeks, undated} = postWeeks(D.episodes);
+  if (postChart) { postChart.destroy(); postChart = null; }
+  const {weeks, undated} = postWeeks(scopedEpisodes());
   const labels = weeks.map(w => shortDay(w.fri, true));
   const ds = PW_PLATFORMS.map(p => ({label: LABEL[p] + (p === "x" ? " (impressions)" : ""), plat: p,
     data: weeks.map(w => w.views[p]), backgroundColor: COLOR[p], borderWidth: 0, stack: "views"}));
   const tip = document.getElementById("postTip");
   const tipIdle = () => { tip.className = "post-tip muted"; tip.textContent = "Hover a week to see its episodes and per-platform views."; };
+  if (!weeks.length) {
+    tipIdle();
+    document.getElementById("postNote").textContent = "No episodes in this selection.";
+    return;
+  }
   let tipIdx = -1;
   const showWeekTip = w => {
     const plats = PW_PLATFORMS.filter(p => w.views[p] > 0).map(p =>
@@ -160,7 +318,7 @@ function postWeekChart() {
     tip.innerHTML = `<h3>Week of ${shortDay(w.start)} – ${shortDay(w.end, true)}</h3><div class="plats">${plats}</div>${eps}`;
   };
   tip.onclick = ev => { const a = ev.target.closest("a[data-key]"); if (a) { ev.preventDefault(); selectEp(a.dataset.key, true); } };
-  new Chart(document.getElementById("postChart"), {type:"bar", data:{labels, datasets:ds},
+  postChart = new Chart(document.getElementById("postChart"), {type:"bar", data:{labels, datasets:ds},
     options:{responsive:true, maintainAspectRatio:false, interaction:{mode:"index", intersect:false},
       scales:{x:{stacked:true, ticks:{autoSkip:true, maxRotation:0}, title:{display:true, text:"Posting week (labelled by its Friday)"}},
               y:{stacked:true, beginAtZero:true, ticks:{callback:v => v.toLocaleString()}, title:{display:true, text:"Current views"}}},
@@ -181,7 +339,7 @@ function postWeekChart() {
 function ageDays(e) { return e.first_posted ? Math.floor((new Date(D.last_snapshot) - new Date(e.first_posted + "T00:00")) / 864e5) : null; }
 
 function newTable() {
-  const eps = D.episodes.filter(e => e.first_posted).sort((a,b) => b.first_posted.localeCompare(a.first_posted)).slice(0, 8);
+  const eps = scopedEpisodes().filter(e => e.first_posted).sort((a,b) => b.first_posted.localeCompare(a.first_posted)).slice(0, 8);
   const cols = P.filter(p => has(p,"views"));
   document.getElementById("newTable").innerHTML = `<thead><tr><th class="l">Episode</th><th>First posted</th><th>Age (days)</th>${cols.map(p=>`<th>${LABEL[p]}</th>`).join("")}<th>Total views</th><th>Views / day</th><th>Change</th></tr></thead><tbody>` +
     eps.map(e => { const a = ageDays(e), t = e.trend, ch = t.length > 1 ? t[t.length-1].total_views - t[t.length-2].total_views : null;
@@ -205,13 +363,14 @@ let sortKey = "tviews", sortDir = -1, selected = null;
 function epTable() {
   const q = document.getElementById("search").value.trim().toLowerCase();
   const col = EPCOLS.find(c => c.k === sortKey);
-  const rows = D.episodes.filter(e => !q || e.name.toLowerCase().includes(q)).sort((a,b) => { const x = col.s(a), y = col.s(b); return (x > y ? 1 : x < y ? -1 : 0) * sortDir; });
+  const scoped = scopedEpisodes();
+  const rows = scoped.filter(e => !q || e.name.toLowerCase().includes(q)).sort((a,b) => { const x = col.s(a), y = col.s(b); return (x > y ? 1 : x < y ? -1 : 0) * sortDir; });
   const groups = []; EPCOLS.forEach(c => { const g = c.grp || ""; if (groups.length && groups[groups.length-1].g === g) groups[groups.length-1].n++; else groups.push({g, n:1}); });
   const gh = groups.map(x => `<th class="gh" colspan="${x.n}">${x.g ? (x.g==="total" ? "All platforms" : LABEL[x.g]) : ""}</th>`).join("");
   const hh = EPCOLS.map(c => `<th data-k="${c.k}" class="${c.cls||""} ${c.k===sortKey ? (sortDir>0?"sorted-asc":"sorted-desc") : ""}">${c.l}</th>`).join("");
   document.getElementById("epTable").innerHTML = `<thead><tr>${gh}</tr><tr>${hh}</tr></thead><tbody>` +
     rows.map(e => `<tr data-key="${esc(e.key)}" class="${e.key===selected?"sel":""}">${EPCOLS.map(c => `<td class="${c.cls||""}">${c.f(e)}</td>`).join("")}</tr>`).join("") + "</tbody>";
-  document.getElementById("epCount").textContent = `${rows.length} of ${D.episodes.length} episodes`;
+  document.getElementById("epCount").textContent = `${rows.length} of ${scoped.length} in this selection`;
   document.querySelectorAll("#epTable th[data-k]").forEach(th => th.onclick = () => { const k = th.dataset.k; sortDir = (k === sortKey) ? -sortDir : (k==="name" ? 1 : -1); sortKey = k; epTable(); });
   document.querySelectorAll("#epTable tbody tr").forEach(tr => tr.onclick = () => selectEp(tr.dataset.key, false));
 }
