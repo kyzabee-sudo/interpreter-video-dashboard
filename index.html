@@ -4,7 +4,6 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Interpreter Foundation Video Dashboard</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%231f4e78'/%3E%3C/svg%3E">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <style>
   :root { --bg:#f5f7fa; --card:#fff; --ink:#1d2733; --mute:#66727f; --line:#dde3ea; --acc:#1f4e78; }
@@ -102,7 +101,6 @@
     </div>
     <p class="muted summary" id="filterSummary"></p>
   </section>
-  <p class="muted" id="matchNote" hidden style="margin:0 0 4px"></p>
 
   <section><h2>Totals by platform <span class="muted" style="font-weight:400" id="cardHint"></span></h2><div class="cards" id="platformCards"></div></section>
 
@@ -111,11 +109,11 @@
 
   <section id="otherOnly" hidden>
     <h2>Per-video views</h2>
-    <p class="muted">This export has no one-by-one post list for the current selection. Platform totals and the series table above still apply.</p>
+    <p class="muted">This export does not list videos outside Interpreting Interpreter one-by-one. The posting-week chart, newest list, and episode table are available for <em>Interpreting Interpreter</em>.</p>
   </section>
 
-  <section id="postWeekSection"><h2><span id="postTitle">Views by posting week, by platform</span> <span class="muted" style="font-weight:400" id="postHead"></span></h2>
-    <div id="postChartWrap" style="position:relative;height:360px"><canvas id="postChart" style="max-height:none"></canvas></div>
+  <section id="postWeekSection"><h2>Views by posting week, by platform <span class="muted" style="font-weight:400" id="postHead"></span></h2>
+    <div style="position:relative;height:360px"><canvas id="postChart" style="max-height:none"></canvas></div>
     <div id="postTip" class="post-tip muted">Hover a week to see its videos and per-platform views.</div>
     <p class="muted" id="postNote"></p></section>
 
@@ -188,42 +186,6 @@ function slugSeries(label) {
   if (label === "Other") return "content-other"; // "other" remains the non-II bucket
   return label.toLowerCase().replace(/&/g, "and").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }
-// Old ?series= slugs. Prefer the newer series label when that row exists; otherwise keep the
-// label this export still uses. Never send these to Interpreting Interpreter.
-const RETIRED_SERIES = {
-  "scripture-shorts": ["Come, Follow Me & Scripture Roundtables", "Scripture shorts", "Other"],
-  "margaret-barker": ["Lecture series & tours", "Margaret Barker", "Other"],
-  "come-follow-me": ["Come, Follow Me & Scripture Roundtables", "Come Follow Me", "Other"],
-  "conferences-and-lectures": ["Other conferences & symposia", "Conferences & lectures", "Other"],
-  "scripture-roundtable": ["Come, Follow Me & Scripture Roundtables", "Scripture Roundtable", "Other"],
-  "interpreter-podcast": ["Conversations with Interpreter", "Interpreter Podcast", "Other"],
-  "not-by-bread-alone": ["Not by Bread Alone & DR Congo", "Not by Bread Alone", "Other"],
-};
-const SERIES_COLOR = {
-  "Interpreting Interpreter": "#1f4e78",
-  "Conversations with Interpreter": "#ef6c00",
-  "Witnesses": "#6a3d9a",
-  "Come, Follow Me & Scripture Roundtables": "#00838f",
-  "Come Follow Me": "#1565c0",
-  "Scripture Roundtable": "#00838f",
-  "Temple on Mount Zion conferences": "#5d4037",
-  "Other conferences & symposia": "#b8860b",
-  "Conferences & lectures": "#b8860b",
-  "Lecture series & tours": "#7b1fa2",
-  "Margaret Barker": "#ad1457",
-  "Not by Bread Alone & DR Congo": "#2e7d32",
-  "Not by Bread Alone": "#2e7d32",
-  "Interpreter Podcast": "#e67e22",
-  "Scripture shorts": "#c13584",
-  "Other": "#607d8b",
-};
-const SERIES_PALETTE = ["#1f4e78", "#e67e22", "#2e7d32", "#6a3d9a", "#c13584", "#00838f", "#b8860b", "#ad1457", "#5d4037", "#1565c0"];
-function seriesColor(name) {
-  if (SERIES_COLOR[name]) return SERIES_COLOR[name];
-  const i = Math.max(0, contentSeriesNames().indexOf(name));
-  return SERIES_PALETTE[i % SERIES_PALETTE.length];
-}
-function videoSeries(v) { return (v && (v.content_series || v.cs)) || "Other"; }
 
 function videoToRecord(v) {
   const p = v.p;
@@ -244,14 +206,14 @@ function videoToRecord(v) {
   return {
     key: `v:${p}:${v.id}`, name, first_posted: v.posted || null, platforms,
     total_views: views, total_likes: likes, total_comments: comments, trend,
-    content_series: videoSeries(v), kind: "video",
+    content_series: v.cs || "Other", kind: "video",
   };
 }
 function episodeToRecord(e) {
   return {
     key: e.key, name: e.name, first_posted: e.first_posted || null, platforms: e.platforms,
     total_views: e.total_views, total_likes: e.total_likes, total_comments: e.total_comments,
-    trend: e.trend || [], content_series: e.content_series || e.cs || "Interpreting Interpreter", kind: "episode",
+    trend: e.trend || [], content_series: "Interpreting Interpreter", kind: "episode",
   };
 }
 function buildRows() {
@@ -287,22 +249,10 @@ function baseRows() {
   return videoRecs.filter(r => r.content_series === label);
 }
 
-function resolveSeriesId(raw) {
-  if (!raw) return "ii";
-  const labels = RETIRED_SERIES[raw];
-  if (labels) {
-    for (const label of labels) {
-      const hit = SERIES.find(s => s.label === label);
-      if (hit) return hit.id;
-    }
-    if (SERIES.some(s => s.id === raw)) return raw;
-    return "all";
-  }
-  return SERIES.some(s => s.id === raw) ? raw : "ii";
-}
 function readParams() {
   const q = new URLSearchParams(location.search);
-  seriesSel = resolveSeriesId(q.get("series"));
+  const s = q.get("series");
+  seriesSel = (s && SERIES.some(x => x.id === s)) ? s : "ii";
   const t = q.get("tf") || "all";
   tfFrom = q.get("from") || "";
   tfTo = q.get("to") || "";
@@ -400,7 +350,7 @@ function contentSeriesNames() {
   const names = [...(D.content_series || [])];
   const seen = new Set(names);
   const add = label => { if (label && !seen.has(label)) { seen.add(label); names.push(label); } };
-  for (const v of D.videos || []) add(videoSeries(v));
+  for (const v of D.videos || []) add(v.cs || "Other");
   return names.length ? names : ["Interpreting Interpreter"];
 }
 function seriesMatchesFilter(label) {
@@ -416,7 +366,7 @@ function seriesTableStats() {
   const platforms = new Set(seriesTablePlatforms());
   for (const v of D.videos || []) {
     if (!platforms.has(v.p)) continue;
-    const cs = videoSeries(v);
+    const cs = v.cs || "Other";
     if (!stats[cs]) stats[cs] = {videos:0, views:0, likes:0, comments:0};
     stats[cs].videos += 1;
     stats[cs].views += videoViews(v);
@@ -558,14 +508,6 @@ function applyFilters() {
   const rows = listing ? scopedRecords() : [];
   const tfTxt = timeframePhrase();
   document.getElementById("filterSummary").innerHTML = `${esc(seriesLabel(seriesSel))} · ${esc(describeSelection(rows))} · <span class="nowrap">posted ${esc(tfTxt)}</span>`;
-  const matchNote = document.getElementById("matchNote");
-  if (seriesSel === "ii") {
-    matchNote.hidden = true;
-    matchNote.textContent = "";
-  } else {
-    matchNote.hidden = false;
-    matchNote.textContent = "Only Interpreting Interpreter is matched across platforms into one episode. Other series are one row per platform post, using the latest two snapshots for a trend.";
-  }
   document.getElementById("postHead").textContent = `(${selectionHeading()}, current views)`;
   document.getElementById("epHead").textContent = seriesSel === "ii" ? "Episodes" : (seriesSel === "all" ? "All videos" : selectionHeading());
   document.getElementById("newHead").textContent = seriesSel === "ii" ? "Newest episodes: early performance" : "Newest videos: early performance";
@@ -573,9 +515,9 @@ function applyFilters() {
     "Age is days since the first post date. Views per day uses that age. Change is views gained since the previous snapshot on platforms that already had a view count. A platform's first appearance is not growth (Instagram views were first collected on 2026-10-01).";
   if (selected && !rows.some(r => r.key === selected)) {
     selected = null;
+    resetDetail();
     replaceUrl(null);
   }
-  if (!selected) resetDetail();
   if (listing) { postWeekChart(); newTable(); epTable(); }
   else if (postChart) { postChart.destroy(); postChart = null; }
   renderSeriesTable();
@@ -595,8 +537,8 @@ function platformCards() {
     const m = k => has(p, k) ? fmt(src[k]) : '<span class="na">n/a</span>';
     const viewWord = metricName(p, "views");
     const extra = showSeriesSplit ? `
-      <div class="kv"><span title="Interpreting Interpreter">II videos</span><b>${fmt(src.series_videos)}</b></div>
-      <div class="kv"><span title="Interpreting Interpreter">II ${viewWord}</span><b>${has(p, "views") ? fmt(src.series_views) : '<span class="na">n/a</span>'}</b></div>` : "";
+      <div class="kv"><span>Series videos</span><b>${fmt(src.series_videos)}</b></div>
+      <div class="kv"><span>Series ${viewWord}</span><b>${has(p, "views") ? fmt(src.series_views) : '<span class="na">n/a</span>'}</b></div>` : "";
     return `<div class="card" style="--c:${COLOR[p]}"><h3>${LABEL[p]}</h3>
       <div class="big">${has(p, "views") ? fmt(src.views) : '<span class="na">n/a</span>'}</div><div class="muted">${viewWord}</div>
       <div class="kv"><span>Videos</span><b>${fmt(src.videos)}</b></div>
@@ -638,68 +580,9 @@ function postWeeks(records) {
   return {weeks, undated, plats};
 }
 function platChartLabel(p) { return LABEL[p] + (p === "x" ? " (impressions)" : ""); }
-const monthLabel = d => d.toLocaleDateString("en-CA", {timeZone:"UTC", month:"short", year:"numeric"});
-function recordViews(e) {
-  if (typeof e.total_views === "number") return e.total_views;
-  return chartPlatforms().reduce((a, p) => a + (e.platforms[p]?.views || 0), 0);
-}
-function postingGrain(records) {
-  if (seriesSel === "ii") return "week";
-  const dates = records.map(e => e.first_posted).filter(Boolean).sort();
-  if (dates.length < 2) return "week";
-  const span = new Date(dates[dates.length - 1] + "T00:00:00Z") - new Date(dates[0] + "T00:00:00Z");
-  return span > 120 * 7 * DAY ? "month" : "week";
-}
-function postBuckets(records, grain, groupBy) {
-  const plats = chartPlatforms();
-  const groups = groupBy === "series" ? contentSeriesNames() : plats;
-  const byKey = new Map(); const undated = [];
-  for (const e of records) {
-    if (!e.first_posted) { undated.push(e); continue; }
-    const d = new Date(e.first_posted + "T00:00:00Z");
-    const start = grain === "month"
-      ? new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1))
-      : new Date(d.getTime() - ((d.getUTCDay() + 6) % 7) * DAY);
-    const key = isoDay(start);
-    if (!byKey.has(key)) byKey.set(key, {start, views: Object.fromEntries(groups.map(g => [g, 0])), episodes: []});
-    const bucket = byKey.get(key);
-    if (groupBy === "series") {
-      const g = e.content_series || "Other";
-      if (bucket.views[g] === undefined) bucket.views[g] = 0;
-      bucket.views[g] += recordViews(e);
-    } else plats.forEach(p => { bucket.views[p] += e.platforms[p]?.views || 0; });
-    bucket.episodes.push(e);
-  }
-  const keys = [...byKey.keys()].sort(); const buckets = [];
-  if (keys.length && grain === "week") {
-    for (let t = new Date(keys[0] + "T00:00:00Z"); isoDay(t) <= keys[keys.length - 1]; t = new Date(t.getTime() + 7 * DAY)) {
-      buckets.push(byKey.get(isoDay(t)) || {start: t, views: Object.fromEntries(groups.map(g => [g, 0])), episodes: []});
-    }
-  } else if (keys.length) {
-    const end = new Date(keys[keys.length - 1] + "T00:00:00Z");
-    for (let y = new Date(keys[0] + "T00:00:00Z").getUTCFullYear(), m = new Date(keys[0] + "T00:00:00Z").getUTCMonth(); y < end.getUTCFullYear() || (y === end.getUTCFullYear() && m <= end.getUTCMonth()); ) {
-      const t = new Date(Date.UTC(y, m, 1));
-      buckets.push(byKey.get(isoDay(t)) || {start: t, views: Object.fromEntries(groups.map(g => [g, 0])), episodes: []});
-      m += 1; if (m === 12) { m = 0; y += 1; }
-    }
-  }
-  buckets.forEach(b => {
-    if (grain === "week") { b.fri = new Date(b.start.getTime() + 4 * DAY); b.end = new Date(b.start.getTime() + 6 * DAY); }
-    b.total = groups.reduce((a, g) => a + (b.views[g] || 0), 0);
-    b.episodes.sort((a, c) => String(a.first_posted).localeCompare(String(c.first_posted)) || a.name.localeCompare(c.name));
-  });
-  const shown = groupBy === "series" ? groups.filter(g => buckets.some(b => (b.views[g] || 0) > 0)) : groups;
-  return {buckets, undated, groups: shown.length ? shown : groups, grain, groupBy};
-}
 
 function postWeekChart() {
-  if (seriesSel === "ii") { postWeekChartII(); return; }
-  postWeekChartGeneral();
-}
-function postWeekChartII() {
   if (postChart) { postChart.destroy(); postChart = null; }
-  document.getElementById("postTitle").textContent = "Views by posting week, by platform";
-  document.getElementById("postChartWrap").style.height = "360px";
   const {weeks, undated, plats} = postWeeks(scopedRecords());
   const labels = weeks.map(w => shortDay(w.fri, true));
   const ds = plats.map(p => ({label: platChartLabel(p), plat: p,
@@ -740,74 +623,6 @@ function postWeekChartII() {
   let text = `Each video's current views (as of ${D.last_snapshot.replace("T", " ")}) are counted in the week it was first posted ` +
     `(earliest post date across platforms; weeks run Monday–Sunday and are labelled by their Friday, the usual release day). ` +
     `Recent weeks have had less time to collect views. Hover a week to see its videos and per-platform views below the chart. `;
-  text += omitted.length ? `${omitted.join(", ")} ${omitted.length === 1 ? "is" : "are"} omitted (no view counts in this export). ` : "";
-  text += has("instagram", "views") ? "Instagram is included (tile counts, first collected 2026-10-01). " : "";
-  text += "X figures are impressions.";
-  if (undated.length === 1) text += ` 1 video without a known post date isn't shown: ${undated[0].name}.`;
-  else if (undated.length > 1 && undated.length <= 8) text += ` ${undated.length} videos without a known post date aren't shown: ${undated.map(e => e.name).join(", ")}.`;
-  else if (undated.length > 8) text += ` ${undated.length} videos without a known post date aren't shown.`;
-  note.textContent = text;
-}
-function postWeekChartGeneral() {
-  if (postChart) { postChart.destroy(); postChart = null; }
-  const records = scopedRecords();
-  const groupBy = (seriesSel === "all" || seriesSel === "other") ? "series" : "platform";
-  const grain = postingGrain(records);
-  const period = grain === "month" ? "month" : "week";
-  document.getElementById("postTitle").textContent = `Views by posting ${period}, by ${groupBy}`;
-  document.getElementById("postChartWrap").style.height = groupBy === "series" ? "440px" : "360px";
-  const {buckets, undated, groups} = postBuckets(records, grain, groupBy);
-  const labels = buckets.map(b => grain === "month" ? monthLabel(b.start) : shortDay(b.fri, true));
-  const colorOf = g => groupBy === "series" ? seriesColor(g) : COLOR[g];
-  const labelOf = g => groupBy === "series" ? g : platChartLabel(g);
-  const ds = groups.map(g => ({label: labelOf(g),
-    data: buckets.map(b => b.views[g] || 0), backgroundColor: colorOf(g), borderWidth: 0, stack: "views"}));
-  const tip = document.getElementById("postTip");
-  const tipIdle = () => { tip.className = "post-tip muted"; tip.textContent = groupBy === "series" ? `Hover a ${period} to see views by series.` : `Hover a ${period} to see its videos and per-platform views.`; };
-  const note = document.getElementById("postNote");
-  if (!buckets.length) {
-    tipIdle();
-    note.textContent = "No videos in this selection.";
-    return;
-  }
-  let tipIdx = -1;
-  const showTip = b => {
-    const bits = groups.filter(g => (b.views[g] || 0) > 0).map(g =>
-      `<span class="plat"><span class="swatch" style="background:${colorOf(g)}"></span>${esc(labelOf(g))}: <b>${b.views[g].toLocaleString()}</b></span>`).join("");
-    const heading = grain === "month" ? monthLabel(b.start) : `Week of ${shortDay(b.start)} – ${shortDay(b.end, true)}`;
-    let body;
-    if (!b.episodes.length) body = `<p class="muted" style="margin:0">No video posted this ${period}</p>`;
-    else if (b.episodes.length > 12) body = `<div class="muted">Total: <b>${b.total.toLocaleString()}</b> · ${plural(b.episodes.length, "post")}</div><p class="muted" style="margin:4px 0 0">Too many posts to list here. They are in the table below.</p>`;
-    else body = `<div class="muted">Total: <b>${b.total.toLocaleString()}</b></div><ul>${b.episodes.map(e => {
-      const views = recordViews(e);
-      const tag = (seriesSel === "all" || seriesSel === "other") ? ` · ${esc(e.content_series)}` : "";
-      return `<li><a href="${esc(epHref(e.key))}" data-key="${esc(e.key)}">${esc(e.name)}</a> (${e.first_posted}${tag}): ${views.toLocaleString()}</li>`;
-    }).join("")}</ul>`;
-    tip.className = "post-tip";
-    tip.innerHTML = `<h3>${heading}</h3><div class="plats">${bits}</div>${body}`;
-  };
-  tip.onclick = ev => { const a = ev.target.closest("a[data-key]"); if (a) { ev.preventDefault(); selectEp(a.dataset.key, true); } };
-  const xTitle = grain === "month" ? "Posting month" : "Posting week (labelled by its Friday)";
-  postChart = new Chart(document.getElementById("postChart"), {type:"bar", data:{labels, datasets:ds},
-    options:{responsive:true, maintainAspectRatio:false, interaction:{mode:"index", intersect:false},
-      scales:{x:{stacked:true, ticks:{autoSkip:true, maxRotation:0}, title:{display:true, text:xTitle}},
-              y:{stacked:true, beginAtZero:true, ticks:{callback:v => v.toLocaleString()}, title:{display:true, text:"Current views"}}},
-      plugins:{legend: groupBy === "series" ? {position:"bottom", labels:{boxWidth:12, font:{size:11}}} : {},
-        tooltip:{enabled:false, external: ({tooltip: t}) => {
-        if (!t.opacity || !t.dataPoints.length) { tipIdx = -1; tipIdle(); return; }
-        const i = t.dataPoints[0].dataIndex;
-        if (i === tipIdx) return;
-        tipIdx = i; showTip(buckets[i]);
-      }}}}});
-  const omitted = P.filter(p => !has(p, "views")).map(p => LABEL[p]);
-  const when = D.last_snapshot.replace("T", " ");
-  let text = grain === "month"
-    ? `Each post's current views (as of ${when}) are counted in the month it was posted. Months are used because this selection spans more than two years; choose a shorter timeframe for a weekly chart. `
-    : `Each post's current views (as of ${when}) are counted in the week it was posted (weeks run Monday–Sunday and are labelled by their Friday). `;
-  text += groupBy === "series"
-    ? "Bars are stacked by content series. Interpreting Interpreter is one matched episode; every other series counts each platform post on its own. "
-    : "Bars are stacked by platform. This series is not matched across platforms, so each platform post is counted on its own post date. ";
-  text += `Recent ${period}s have had less time to collect views. Hover a ${period} for the breakdown below the chart. `;
   text += omitted.length ? `${omitted.join(", ")} ${omitted.length === 1 ? "is" : "are"} omitted (no view counts in this export). ` : "";
   text += has("instagram", "views") ? "Instagram is included (tile counts, first collected 2026-10-01). " : "";
   text += "X figures are impressions.";
@@ -910,7 +725,7 @@ function onRowClick(ev, tr) {
 }
 
 function resetDetail() {
-  document.getElementById("epTitle").textContent = seriesSel === "ii" ? "Episode trend" : "Video trend";
+  document.getElementById("epTitle").textContent = "Episode trend";
   document.getElementById("epHint").textContent = "Select a row in the table above.";
   document.getElementById("epLinks").innerHTML = "";
   if (epChart) { epChart.destroy(); epChart = null; }
@@ -934,9 +749,7 @@ function selectEp(key, scroll) {
   const views = typeof e.total_views === "number" ? e.total_views.toLocaleString() : "–";
   document.getElementById("epTitle").textContent = `${e.kind === "episode" ? "Episode" : "Video"} trend: ${e.name}`;
   document.getElementById("epHint").textContent = `${e.content_series} · first posted ${posted} · total views ${views} · ${plural(n, "snapshot")}` +
-    (e.kind === "episode"
-      ? (n < 2 ? " (trend lines fill in as more snapshots are collected)" : "")
-      : " (one platform post; only the latest two snapshots are stored)");
+    (n < 2 ? " (trend lines fill in as more snapshots are collected)" : "");
   const links = P.filter(p => e.platforms[p] && (e.platforms[p].urls || []).length).map(p =>
     e.platforms[p].urls.map((u, i) => `<a href="${esc(u)}" target="_blank" rel="noopener">${LABEL[p]}${e.platforms[p].urls.length > 1 ? " " + (i + 1) : ""}</a>`).join("")).join("");
   document.getElementById("epLinks").innerHTML = links || `<span class="muted">No post link in this export.</span>`;
