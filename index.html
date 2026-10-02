@@ -41,10 +41,9 @@
   #epLinks a { margin-right:10px; display:inline-block; margin-bottom:4px; }
   .pill { display:inline-block; padding:1px 6px; border-radius:9px; font-size:11px; color:#fff; margin-right:2px; }
   .legend { display:flex; flex-wrap:wrap; gap:4px 12px; align-items:center; margin:0 0 8px; }
-  .legend span.item { display:inline-flex; align-items:center; gap:4px; max-width:100%; }
-  .legend .swatch { width:10px; height:10px; border-radius:2px; flex:none; display:inline-block; }
-  #seriesLegend { margin:0 0 10px; color:var(--ink); font-size:13px; }
-  #seriesChartWrap { width:100%; max-width:100%; }
+  .legend span.item { display:inline-flex; align-items:center; gap:4px; }
+  #groupTable tr.total td { font-weight:700; background:#eef2f6; border-top:2px solid var(--line); }
+  #groupTable tr.total:hover td { background:#eef2f6; cursor:default; }
   canvas { max-height:340px; }
   .post-tip { margin:10px 0 0; padding:10px 12px; border:1px solid var(--line); border-radius:8px; background:#f7f9fb; min-height:4.6em; }
   .post-tip h3 { margin:0 0 6px; font-size:14px; }
@@ -105,12 +104,8 @@
 
   <section><h2>Totals by platform <span class="muted" style="font-weight:400" id="cardHint"></span></h2><div class="cards" id="platformCards"></div></section>
 
-  <section>
-    <h2>Views by series <span class="muted" style="font-weight:400" id="seriesHint"></span></h2>
-    <p class="legend" id="seriesLegend"></p>
-    <div id="seriesChartWrap" style="position:relative;height:360px"><canvas id="seriesChart" style="max-height:none"></canvas></div>
-    <p class="muted" id="seriesNote"></p>
-  </section>
+  <section id="seriesSection"><h2>Views by series</h2><div class="scroll" style="max-height:none"><table id="groupTable" style="width:auto;min-width:640px"></table></div>
+    <p class="muted" id="seriesNote"></p></section>
 
   <section id="otherOnly" hidden>
     <h2>Per-video views</h2>
@@ -148,26 +143,6 @@
 const P = ["tiktok","youtube","x","instagram","facebook"];
 const LABEL = {tiktok:"TikTok", youtube:"YouTube", x:"X", instagram:"Instagram", facebook:"Facebook"};
 const COLOR = {tiktok:"#111111", youtube:"#e62117", x:"#1d9bf0", instagram:"#c13584", facebook:"#1877f2", total:"#2e7d32"};
-// One color per content series, stable across the legend and both chart shapes.
-// Kept distinct from the platform colors above.
-const SERIES_COLOR = {
-  "Interpreting Interpreter": "#1f4e78",
-  "Witnesses": "#0b6e4f",
-  "Not by Bread Alone": "#e07a3d",
-  "Scripture Roundtable": "#6a4c93",
-  "Interpreter Podcast": "#b4537a",
-  "Conferences & lectures": "#3d5a80",
-  "Margaret Barker": "#9a6240",
-  "Come Follow Me": "#5b8c2a",
-  "Scripture shorts": "#d4a017",
-  "Other": "#7d8b99",
-};
-function seriesColor(label) {
-  if (SERIES_COLOR[label]) return SERIES_COLOR[label];
-  let h = 0;
-  for (let i = 0; i < label.length; i++) h = (h * 33 + label.charCodeAt(i)) >>> 0;
-  return `hsl(${h % 360} 42% 36%)`;
-}
 const fmt = v => (v === null || v === undefined || v === "") ? '<span class="na">–</span>' : Number(v).toLocaleString();
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const plural = (n, one, many) => `${n.toLocaleString()} ${n === 1 ? one : (many || one + "s")}`;
@@ -186,7 +161,7 @@ const TF = [
   {id:"90d", label:"Last 90 days"},
   {id:"1y", label:"Last 12 months"},
 ];
-let D, epChart, postChart, seriesChart;
+let D, epChart, postChart;
 let SERIES = [];
 let seriesSel = "ii", tfSel = "all", tfFrom = "", tfTo = "";
 let episodeRecs = [], videoRecs = [], rowMap = new Map();
@@ -365,236 +340,65 @@ function catPlatStats(label) {
   return Object.fromEntries(P.map(p => [p, plats[p] || {videos:0, views:0, likes:0, comments:0}]));
 }
 
-// Carried videos were not re-collected this run; their last count still belongs in the total.
-// Dropping them (or summing only `collected` rows) makes a series look like it lost views.
+// Carried videos were not re-collected this run; their last count still belongs in the series total.
 function videoViews(v) {
   if (typeof v.views === "number") return v.views;
   if (v && v.carried && typeof v.prev_views === "number") return v.prev_views;
   return 0;
 }
-function viewPlatforms() { return P.filter(p => has(p, "views") && !hiddenGrps.has(p)); }
-function everyViewPlatformOn() {
-  const all = P.filter(p => has(p, "views"));
-  return all.length > 0 && all.every(p => !hiddenGrps.has(p));
-}
 function contentSeriesNames() {
   const names = [...(D.content_series || [])];
   const seen = new Set(names);
   const add = label => { if (label && !seen.has(label)) { seen.add(label); names.push(label); } };
-  for (const t of D.timeline || []) Object.keys(t.content_series_views || {}).forEach(add);
   for (const v of D.videos || []) add(v.cs || "Other");
   return names.length ? names : ["Interpreting Interpreter"];
 }
-function seriesHighlighted(label) {
+function seriesMatchesFilter(label) {
   if (seriesSel === "all") return true;
   if (seriesSel === "ii") return label === "Interpreting Interpreter";
   if (seriesSel === "other") return label !== "Interpreting Interpreter";
   const meta = seriesMeta(seriesSel);
   return !!(meta && meta.cs === label);
 }
-function seriesFill(label) {
-  const c = seriesColor(label);
-  if (seriesHighlighted(label)) return c;
-  const hex = String(c).replace("#", "");
-  if (!/^[0-9a-fA-F]{6}$/.test(hex)) return c;
-  const r = parseInt(hex.slice(0, 2), 16), g = parseInt(hex.slice(2, 4), 16), b = parseInt(hex.slice(4, 6), 16);
-  return `rgba(${r},${g},${b},0.28)`;
-}
-function sumViews(obj) { return Object.values(obj).reduce((a, n) => a + (n || 0), 0); }
-function compactNum(v) {
-  const n = Number(v), sign = n < 0 ? "-" : "", a = Math.abs(n);
-  if (a >= 1e6) return sign + (a / 1e6).toFixed(a >= 1e7 ? 0 : 1).replace(/\.0$/, "") + "M";
-  if (a >= 1e3) return sign + (a / 1e3).toFixed(a >= 1e4 ? 0 : 1).replace(/\.0$/, "") + "k";
-  return n.toLocaleString();
-}
-function runLabel(time) {
-  const [date, clock] = String(time).split("T");
-  const parts = date.split("-");
-  if (parts.length < 3) return String(time).replace("T", " ");
-  const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-  return `${months[+parts[1] - 1] || parts[1]} ${+parts[2]}${clock ? ", " + clock : ""}`;
-}
-function snapshotFromVideos(names, platforms) {
-  const totals = Object.fromEntries(names.map(s => [s, 0]));
+function seriesTablePlatforms() { return P.filter(p => !hiddenGrps.has(p)); }
+function seriesTableStats() {
+  const stats = Object.fromEntries(contentSeriesNames().map(n => [n, {videos:0, views:0, likes:0, comments:0}]));
+  const platforms = new Set(seriesTablePlatforms());
   for (const v of D.videos || []) {
+    if (!platforms.has(v.p)) continue;
     const cs = v.cs || "Other";
-    if (!(cs in totals) || !platforms.includes(v.p) || !has(v.p, "views")) continue;
-    totals[cs] += videoViews(v);
+    if (!stats[cs]) stats[cs] = {videos:0, views:0, likes:0, comments:0};
+    stats[cs].videos += 1;
+    stats[cs].views += videoViews(v);
+    stats[cs].likes += typeof v.likes === "number" ? v.likes : 0;
+    stats[cs].comments += typeof v.comments === "number" ? v.comments : 0;
   }
-  return totals;
+  return stats;
 }
-function chartRecords() { return episodeRecs.concat(videoRecs).filter(inTimeframe); }
-function snapshotFromRecords(names, platforms) {
-  const totals = Object.fromEntries(names.map(s => [s, 0]));
-  for (const e of chartRecords()) {
-    const cs = e.content_series || "Other";
-    if (!(cs in totals)) continue;
-    for (const p of platforms) {
-      const cell = e.platforms[p];
-      if (cell && typeof cell.views === "number") totals[cs] += cell.views;
-    }
-  }
-  return totals;
-}
-function timelinePoints(names) {
-  return (D.timeline || []).map(t => {
-    const src = t.content_series_views || {};
-    const views = {};
-    names.forEach(s => { views[s] = src[s] || 0; });
-    return {time: t.time, views};
-  });
-}
-// Latest bar uses every video, including ones carried forward since prev_time.
-function applyLatestVideoTotals(points, names, platforms) {
-  if (!points.length) return points;
-  const totals = snapshotFromVideos(names, platforms);
-  const last = points[points.length - 1];
-  names.forEach(s => { last.views[s] = totals[s] || 0; });
-  return points;
-}
-function seriesChartPlan() {
-  const names = contentSeriesNames();
-  const platforms = viewPlatforms();
-  if (!platforms.length || !names.length) return {mode:"empty", names, platforms};
-  if (!isDated() && everyViewPlatformOn()) {
-    const points = timelinePoints(names);
-    if (points.length >= 2) {
-      applyLatestVideoTotals(points, names, platforms);
-      return {mode:"history", names, platforms, points};
-    }
-  }
-  // Per-series history is only stored for all platforms together. A posting window
-  // or a hidden platform falls back to one bar per series for the rows in view.
-  const values = isDated() ? snapshotFromRecords(names, platforms) : snapshotFromVideos(names, platforms);
-  return {mode:"snapshot", names, platforms, values};
-}
-function highlightNote(values) {
-  if (seriesSel === "all") return "";
-  const names = contentSeriesNames().filter(seriesHighlighted);
-  const n = names.reduce((a, s) => a + (values[s] || 0), 0);
-  return ` ${selectionHeading()} is drawn in full color to match the series filter (${n.toLocaleString()} views). The other series stay in the chart so the total still matches.`;
-}
-function renderSeriesLegend(names, values) {
-  document.getElementById("seriesLegend").innerHTML = names.map(s => {
-    const on = seriesHighlighted(s);
-    return `<span class="item"${on ? "" : " style=\"opacity:.5\""}><span class="swatch" style="background:${seriesColor(s)}"></span>${esc(s)} <b>${(values[s] || 0).toLocaleString()}</b></span>`;
-  }).join("");
-}
-function seriesTotalsNote(plan, total) {
-  const carried = " A video that was not re-collected keeps its last count, so skipping older videos does not drop a series.";
-  const mix = "Views add plays, X impressions, and background counts.";
-  if (plan.mode === "empty") return "Turn a platform on in the column toggles to see its views here.";
-  const latestValues = plan.mode === "history" ? plan.points[plan.points.length - 1].views : plan.values;
-  const n = total.toLocaleString();
-  const hi = highlightNote(latestValues);
-  if (plan.mode === "history") {
-    return `${mix} Each bar is one collection run, stacked by content series. The stack sums to overall views at that run. Latest total ${n}.${hi}${carried}`;
-  }
-  let text = `${mix} `;
-  if (isDated()) text += `Bars are current views of videos posted ${timeframePhrase()}, split by series, and sum to ${n}.`;
-  else text += `Bars are the latest count for each series and sum to ${n}.`;
-  if (!everyViewPlatformOn()) {
-    const on = plan.platforms.map(p => LABEL[p]).join(", ");
-    text += ` Limited to ${on}. Turning a platform off in the column toggles removes it here; the collection-run chart returns when every platform is on.`;
-  }
-  return text + hi + carried;
-}
-function destroySeriesChart() {
-  if (seriesChart) { seriesChart.destroy(); seriesChart = null; }
-}
-function seriesChartTip(horizontal) {
-  return {
-    mode: "index", intersect: false,
-    filter: item => {
-      const v = horizontal ? item.parsed.x : item.parsed.y;
-      return (v || 0) !== 0;
-    },
-    callbacks: {
-      label: item => {
-        const v = horizontal ? item.parsed.x : item.parsed.y;
-        const name = horizontal ? item.label : item.dataset.label;
-        return `${name}: ${Number(v || 0).toLocaleString()}`;
-      },
-      footer: items => {
-        if (!items.length) return "";
-        const i = items[0].dataIndex;
-        const chart = items[0].chart;
-        let total = 0;
-        for (const ds of chart.data.datasets) total += Number(ds.data[i]) || 0;
-        return "Total: " + total.toLocaleString();
-      },
-    },
-  };
-}
-function renderSeriesChart() {
-  const canvas = document.getElementById("seriesChart");
-  const wrap = document.getElementById("seriesChartWrap");
-  if (!canvas || !D) return;
-  destroySeriesChart();
-  const plan = seriesChartPlan();
-  const narrow = window.innerWidth < 800;
-  if (plan.mode === "empty") {
-    wrap.style.height = "0px";
-    renderSeriesLegend([], {});
-    document.getElementById("seriesHint").textContent = "";
-    document.getElementById("seriesNote").textContent = seriesTotalsNote(plan, 0);
-    canvas.removeAttribute("aria-label");
-    return;
-  }
-  const latestValues = plan.mode === "history"
-    ? plan.points[plan.points.length - 1].views
-    : plan.values;
-  const total = sumViews(latestValues);
-  renderSeriesLegend(plan.names, latestValues);
-  const modeLabel = plan.mode === "history" ? "collection runs" : (isDated() ? "posted " + timeframePhrase() : "latest snapshot");
-  const hiLabel = seriesSel === "all" ? "" : `; ${selectionHeading()} highlighted`;
-  document.getElementById("seriesHint").textContent = `(${modeLabel}${hiLabel})`;
-  document.getElementById("seriesNote").textContent = seriesTotalsNote(plan, total);
-  canvas.setAttribute("aria-label", `Views by series. Latest total ${total.toLocaleString()}.`);
-  const tickFont = narrow ? 10 : 12;
-  if (plan.mode === "history") {
-    wrap.style.height = narrow ? "300px" : "360px";
-    const labels = plan.points.map(pt => runLabel(pt.time));
-    const datasets = plan.names.map(s => ({
-      label: s,
-      data: plan.points.map(pt => pt.views[s] || 0),
-      backgroundColor: seriesFill(s),
-      borderWidth: 0,
-      stack: "views",
-      maxBarThickness: 48,
-    }));
-    seriesChart = new Chart(canvas, {type:"bar", data:{labels, datasets},
-      options:{responsive:true, maintainAspectRatio:false, animation:false,
-        interaction:{mode:"index", intersect:false},
-        scales:{
-          x:{stacked:true, ticks:{autoSkip:true, maxRotation:0, minRotation:0, font:{size:tickFont}}, title:{display:!narrow, text:"Collection run"}},
-          y:{stacked:true, beginAtZero:true, ticks:{callback:compactNum, font:{size:tickFont}}, title:{display:true, text:"Views"}},
-        },
-        plugins:{legend:{display:false}, tooltip:seriesChartTip(false)}}});
-    return;
-  }
-  wrap.style.height = Math.max(220, plan.names.length * (narrow ? 40 : 34) + 48) + "px";
-  seriesChart = new Chart(canvas, {type:"bar",
-    data:{labels:plan.names, datasets:[{
-      label:"Views",
-      data:plan.names.map(s => plan.values[s] || 0),
-      backgroundColor:plan.names.map(seriesFill),
-      borderWidth:0,
-      maxBarThickness:26,
-    }]},
-    options:{indexAxis:"y", responsive:true, maintainAspectRatio:false, animation:false,
-      scales:{
-        x:{beginAtZero:true, ticks:{callback:compactNum, font:{size:tickFont}}, title:{display:true, text:"Views"}},
-        y:{ticks:{autoSkip:false, font:{size:narrow ? 11 : 12}, callback(value) {
-          const label = this.getLabelForValue(value);
-          if (!narrow || String(label).length <= 22) return label;
-          const words = String(label).split(" ");
-          if (words.length < 2) return label;
-          const mid = Math.ceil(words.length / 2);
-          return [words.slice(0, mid).join(" "), words.slice(mid).join(" ")];
-        }}},
-      },
-      plugins:{legend:{display:false}, tooltip:seriesChartTip(true)}}});
+function renderSeriesTable() {
+  const table = document.getElementById("groupTable");
+  const note = document.getElementById("seriesNote");
+  if (!table || !D) return;
+  const rows = Object.entries(seriesTableStats()).map(([name, x]) => ({name, ...x}));
+  rows.sort((a, b) => b.views - a.views || a.name.localeCompare(b.name));
+  const total = rows.reduce((a, r) => ({
+    videos: a.videos + r.videos, views: a.views + r.views, likes: a.likes + r.likes, comments: a.comments + r.comments,
+  }), {videos:0, views:0, likes:0, comments:0});
+  const per = x => fmt(x.videos ? Math.round(x.views / x.videos) : null);
+  const row = (name, x, cls) => `<tr class="${cls}"><td class="l">${esc(name)}</td><td>${fmt(x.videos)}</td><td>${fmt(x.views)}</td><td>${fmt(x.likes)}</td><td>${fmt(x.comments)}</td><td>${per(x)}</td></tr>`;
+  const body = rows.map(r => row(r.name, r, seriesSel !== "all" && seriesMatchesFilter(r.name) ? "sel" : "")).join("")
+    + row("Total", total, "total");
+  table.innerHTML = `<thead><tr><th class="l">Series</th><th>Videos</th><th>Views</th><th>Likes</th><th>Comments</th><th>Views per video</th></tr></thead><tbody>${body}</tbody>`;
+  const hidden = P.filter(p => hiddenGrps.has(p)).map(p => LABEL[p]);
+  const shown = seriesTablePlatforms().map(p => LABEL[p]);
+  let text = "Snapshot totals for the latest collection run, one row per content series, sorted by views. ";
+  if (!shown.length) text += "Turn a platform on in the column toggles to see its views here. ";
+  else text += `The total sums to overall views${hidden.length ? ` on ${shown.join(", ")}` : ""}. `;
+  text += "Not affected by the timeframe selector. ";
+  text += seriesSel === "all" ? "Every series is listed. " : `Rows matching ${selectionHeading()} are highlighted. `;
+  text += hidden.length ? `Turning a platform off in the column toggles removes it here (${hidden.join(", ")} off). ` : "Turning a platform off in the column toggles removes it here. ";
+  text += "Views sum plays, X impressions, and background counts. Likes include Facebook reactions. A video that was not re-collected keeps its last count.";
+  note.textContent = text;
 }
 
 // Change counts only platforms that already had a numeric view count.
@@ -716,7 +520,7 @@ function applyFilters() {
   }
   if (listing) { postWeekChart(); newTable(); epTable(); }
   else if (postChart) { postChart.destroy(); postChart = null; }
-  renderSeriesChart();
+  renderSeriesTable();
 }
 
 function platformCards() {
@@ -881,7 +685,7 @@ function renderToggles() {
     if (col && col.grp && hiddenGrps.has(col.grp)) { sortKey = "name"; sortDir = 1; }
     renderToggles();
     epTable();
-    renderSeriesChart();
+    renderSeriesTable();
   });
 }
 
