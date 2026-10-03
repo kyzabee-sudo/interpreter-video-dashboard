@@ -227,7 +227,7 @@ function contentSeriesLabels() {
   const names = [];
   const seen = new Set();
   const add = label => {
-    if (!label || label === "Interpreting Interpreter" || seen.has(label)) return;
+    if (!label || seen.has(label)) return;
     seen.add(label);
     names.push(label);
   };
@@ -243,32 +243,31 @@ function contentSeriesVideoCount(label) {
   return Math.max(fromCat, fromVideos);
 }
 function buildSeries() {
-  const fixed = [
-    {id:"all", label:"All videos", bucket:"all"},
-    {id:"ii", label:"Interpreting Interpreter", bucket:"ii"},
-  ];
-  const extra = [];
-  // Selector options come from the export. A content series with no videos stays hidden.
+  // One flat list: All videos, then each content series in export order. Empty series stay hidden.
+  const series = [{id:"all", label:"All videos"}];
   for (const label of contentSeriesLabels()) {
     if (contentSeriesVideoCount(label) === 0) continue;
     const id = slugSeries(label);
-    if (fixed.some(s => s.id === id) || extra.some(s => s.id === id)) continue;
-    extra.push({id, label: displaySeries(label), bucket:"cs", cs: label});
+    if (series.some(s => s.id === id)) continue;
+    series.push({id, label: displaySeries(label), cs: label});
   }
-  SERIES = fixed.concat(extra);
+  SERIES = series;
 }
 function baseRows() {
-  if (seriesSel === "ii") return episodeRecs;
   if (seriesSel === "all") return episodeRecs.concat(videoRecs);
   const meta = seriesMeta(seriesSel);
   const label = meta && meta.cs;
   if (!label) return [];
-  return videoRecs.filter(r => r.content_series === label);
+  const videos = videoRecs.filter(r => r.content_series === label);
+  // Interpreting Interpreter platform posts are already folded into episode rows.
+  if (label === "Interpreting Interpreter") return episodeRecs.concat(videos);
+  return videos;
 }
 
 function readParams() {
   const q = new URLSearchParams(location.search);
   const s = q.get("series");
+  // A series slug that is not in this export, including a retired label, is All videos.
   seriesSel = (s && SERIES.some(x => x.id === s)) ? s : "all";
   const t = q.get("tf") || "all";
   tfFrom = q.get("from") || "";
@@ -337,10 +336,6 @@ function inTimeframe(e) {
 }
 function scopedRecords() { return baseRows().filter(inTimeframe); }
 
-function seriesPlat(p) {
-  const v = D.platforms[p]; if (!v) return null;
-  return {videos: v.series_videos, views: v.series_views, likes: v.series_likes, comments: v.series_comments};
-}
 function episodePlatStats(recs) {
   const out = Object.fromEntries(P.map(p => [p, {videos:0, views:0, likes:0, comments:0}]));
   for (const e of recs) for (const p of P) {
@@ -372,7 +367,6 @@ function contentSeriesNames() {
 }
 function seriesMatchesFilter(label) {
   if (seriesSel === "all") return true;
-  if (seriesSel === "ii") return label === "Interpreting Interpreter";
   const meta = seriesMeta(seriesSel);
   return !!(meta && meta.cs === label);
 }
@@ -461,10 +455,7 @@ function setupFilters() {
   const tfOpts = [...TF, ...years.map(y => ({id:y, label:y})), {id:"custom", label:"Custom range"}];
   if (!tfOpts.some(o => o.id === tfSel)) tfSel = "all";
   const ss = document.getElementById("seriesSel"), ts = document.getElementById("tfSel");
-  const fixed = SERIES.filter(s => s.bucket !== "cs");
-  const extra = SERIES.filter(s => s.bucket === "cs");
-  ss.innerHTML = `<optgroup label="Combined">${fixed.map(s => `<option value="${s.id}">${esc(s.label)}</option>`).join("")}</optgroup>` +
-    (extra.length ? `<optgroup label="Content series">${extra.map(s => `<option value="${s.id}">${esc(s.label)}</option>`).join("")}</optgroup>` : "");
+  ss.innerHTML = SERIES.map(s => `<option value="${esc(s.id)}">${esc(s.label)}</option>`).join("");
   ts.innerHTML = tfOpts.map(s => `<option value="${s.id}">${s.label}</option>`).join("");
   ss.value = seriesSel; ts.value = tfSel;
   document.getElementById("tfFrom").value = tfFrom;
@@ -476,7 +467,6 @@ function setupFilters() {
 }
 
 function selectionHeading() {
-  if (seriesSel === "ii") return "Interpreting Interpreter";
   return seriesLabel(seriesSel);
 }
 function describeSelection(rows) {
@@ -535,9 +525,9 @@ function applyFilters() {
 function platformCards() {
   const dated = isDated();
   let stats;
+  const meta = seriesMeta(seriesSel);
   if (!dated && seriesSel === "all") stats = D.platforms;
-  else if (!dated && seriesSel === "ii") stats = Object.fromEntries(P.map(p => [p, seriesPlat(p)]));
-  else if (!dated && seriesMeta(seriesSel) && seriesMeta(seriesSel).cs) stats = catPlatStats(seriesMeta(seriesSel).cs);
+  else if (!dated && meta && meta.cs) stats = catPlatStats(meta.cs);
   else stats = episodePlatStats(scopedRecords());
   document.getElementById("cardHint").textContent = `(${cardScopePhrase()})`;
   document.getElementById("platformCards").innerHTML = P.map(p => {
