@@ -107,11 +107,6 @@
   <section id="seriesSection"><h2>Views by series</h2><div class="scroll" style="max-height:none"><table id="groupTable" style="width:auto;min-width:640px"></table></div>
     <p class="muted" id="seriesNote"></p></section>
 
-  <section id="otherOnly" hidden>
-    <h2>Per-video views</h2>
-    <p class="muted">This export does not list videos outside Interpreting Interpreter one-by-one. The posting-week chart, newest list, and episode table are available for <em>Interpreting Interpreter</em>.</p>
-  </section>
-
   <section id="postWeekSection"><h2>Views by posting week, by platform <span class="muted" style="font-weight:400" id="postHead"></span></h2>
     <div style="position:relative;height:360px"><canvas id="postChart" style="max-height:none"></canvas></div>
     <div id="postTip" class="post-tip muted">Hover a week to see its videos and per-platform views.</div>
@@ -127,6 +122,7 @@
       <span class="muted" id="epCount"></span>
       <span class="muted">Click a column to sort. Use <b>↗</b> or the title for the trend and post links.</span>
     </div>
+    <p class="muted" id="epModel" style="margin:0 0 8px">Videos matched across platforms; per-platform entry counts are higher.</p>
     <div class="toggles" id="colToggles"></div>
     <p class="legend muted" id="platLegend"></p>
     <div class="scroll"><table id="epTable" class="grp"></table></div>
@@ -163,7 +159,7 @@ const TF = [
 ];
 let D, epChart, postChart;
 let SERIES = [];
-let seriesSel = "ii", tfSel = "all", tfFrom = "", tfTo = "";
+let seriesSel = "all", tfSel = "all", tfFrom = "", tfTo = "";
 let episodeRecs = [], videoRecs = [], rowMap = new Map();
 let sortKey = "tviews", sortDir = -1, selected = null;
 let hiddenGrps = new Set();
@@ -183,9 +179,12 @@ function seriesMeta(id) { return SERIES.find(s => s.id === id); }
 function seriesLabel(id) { return (seriesMeta(id) || seriesMeta("ii") || {label:"Interpreting Interpreter"}).label; }
 function slugSeries(label) {
   if (label === "Interpreting Interpreter") return "ii";
-  if (label === "Other") return "content-other"; // "other" remains the non-II bucket
+  if (label === "Other") return "content-other";
   return label.toLowerCase().replace(/&/g, "and").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }
+// Display name for the content series Other.
+const SERIES_DISPLAY = {Other: "Other (uncategorized)"};
+function displaySeries(label) { return SERIES_DISPLAY[label] || label; }
 
 function videoToRecord(v) {
   const p = v.p;
@@ -224,25 +223,43 @@ function buildRows() {
   episodeRecs.forEach(r => rowMap.set(r.key, r));
   videoRecs.forEach(r => rowMap.set(r.key, r));
 }
+function contentSeriesLabels() {
+  const names = [];
+  const seen = new Set();
+  const add = label => {
+    if (!label || label === "Interpreting Interpreter" || seen.has(label)) return;
+    seen.add(label);
+    names.push(label);
+  };
+  for (const label of D.content_series || []) add(label);
+  for (const v of D.videos || []) add(v.cs || "Other");
+  return names;
+}
+function contentSeriesVideoCount(label) {
+  const cat = D.categories && D.categories[label];
+  const fromCat = cat && typeof cat.videos === "number" ? cat.videos : 0;
+  let fromVideos = 0;
+  for (const v of D.videos || []) if ((v.cs || "Other") === label) fromVideos++;
+  return Math.max(fromCat, fromVideos);
+}
 function buildSeries() {
   const fixed = [
     {id:"all", label:"All videos", bucket:"all"},
     {id:"ii", label:"Interpreting Interpreter", bucket:"ii"},
-    {id:"other", label:"Everything else", bucket:"other"},
   ];
   const extra = [];
-  for (const label of (D.content_series || [])) {
-    if (label === "Interpreting Interpreter") continue;
+  // Selector options come from the export. A content series with no videos stays hidden.
+  for (const label of contentSeriesLabels()) {
+    if (contentSeriesVideoCount(label) === 0) continue;
     const id = slugSeries(label);
     if (fixed.some(s => s.id === id) || extra.some(s => s.id === id)) continue;
-    extra.push({id, label, bucket:"cs", cs: label});
+    extra.push({id, label: displaySeries(label), bucket:"cs", cs: label});
   }
   SERIES = fixed.concat(extra);
 }
 function baseRows() {
   if (seriesSel === "ii") return episodeRecs;
   if (seriesSel === "all") return episodeRecs.concat(videoRecs);
-  if (seriesSel === "other") return videoRecs.filter(r => r.content_series !== "Interpreting Interpreter");
   const meta = seriesMeta(seriesSel);
   const label = meta && meta.cs;
   if (!label) return [];
@@ -252,7 +269,7 @@ function baseRows() {
 function readParams() {
   const q = new URLSearchParams(location.search);
   const s = q.get("series");
-  seriesSel = (s && SERIES.some(x => x.id === s)) ? s : "ii";
+  seriesSel = (s && SERIES.some(x => x.id === s)) ? s : "all";
   const t = q.get("tf") || "all";
   tfFrom = q.get("from") || "";
   tfTo = q.get("to") || "";
@@ -261,7 +278,11 @@ function readParams() {
 function writeParams() {
   const url = new URL(location.href);
   const q = url.searchParams;
-  q.set("series", seriesSel); // explicit for every series, including Interpreting Interpreter
+  // All videos is the landing view: a bare URL stays bare, and an explicit ?series=all is kept.
+  // Do not rewrite the bare URL to ?series=ii. Every other series is written into the query.
+  if (seriesSel === "all") {
+    if (q.has("series") && q.get("series") !== "all") q.delete("series");
+  } else q.set("series", seriesSel);
   if (tfSel === "all") q.delete("tf"); else q.set("tf", tfSel);
   if (tfSel === "custom") {
     if (tfFrom) q.set("from", tfFrom); else q.delete("from");
@@ -316,10 +337,6 @@ function inTimeframe(e) {
 }
 function scopedRecords() { return baseRows().filter(inTimeframe); }
 
-function otherPlat(p) {
-  const v = D.platforms[p]; if (!v) return null;
-  return {videos: v.videos - v.series_videos, views: v.views - v.series_views, likes: v.likes - v.series_likes, comments: v.comments - v.series_comments};
-}
 function seriesPlat(p) {
   const v = D.platforms[p]; if (!v) return null;
   return {videos: v.series_videos, views: v.series_views, likes: v.series_likes, comments: v.series_comments};
@@ -356,7 +373,6 @@ function contentSeriesNames() {
 function seriesMatchesFilter(label) {
   if (seriesSel === "all") return true;
   if (seriesSel === "ii") return label === "Interpreting Interpreter";
-  if (seriesSel === "other") return label !== "Interpreting Interpreter";
   const meta = seriesMeta(seriesSel);
   return !!(meta && meta.cs === label);
 }
@@ -385,7 +401,7 @@ function renderSeriesTable() {
     videos: a.videos + r.videos, views: a.views + r.views, likes: a.likes + r.likes, comments: a.comments + r.comments,
   }), {videos:0, views:0, likes:0, comments:0});
   const per = x => fmt(x.videos ? Math.round(x.views / x.videos) : null);
-  const row = (name, x, cls) => `<tr class="${cls}"><td class="l">${esc(name)}</td><td>${fmt(x.videos)}</td><td>${fmt(x.views)}</td><td>${fmt(x.likes)}</td><td>${fmt(x.comments)}</td><td>${per(x)}</td></tr>`;
+  const row = (name, x, cls) => `<tr class="${cls}"><td class="l">${esc(displaySeries(name))}</td><td>${fmt(x.videos)}</td><td>${fmt(x.views)}</td><td>${fmt(x.likes)}</td><td>${fmt(x.comments)}</td><td>${per(x)}</td></tr>`;
   const body = rows.map(r => row(r.name, r, seriesSel !== "all" && seriesMatchesFilter(r.name) ? "sel" : "")).join("")
     + row("Total", total, "total");
   table.innerHTML = `<thead><tr><th class="l">Series</th><th>Videos</th><th>Views</th><th>Likes</th><th>Comments</th><th>Views per video</th></tr></thead><tbody>${body}</tbody>`;
@@ -436,7 +452,6 @@ function cardScopePhrase() {
   const dated = isDated();
   if (seriesSel === "all") return dated ? "all videos posted in this timeframe" : "all videos, latest numbers";
   if (seriesSel === "ii") return dated ? "Interpreting Interpreter episodes posted in this timeframe" : "Interpreting Interpreter episodes, latest numbers";
-  if (seriesSel === "other") return dated ? "everything except Interpreting Interpreter posted in this timeframe" : "everything except Interpreting Interpreter, latest numbers";
   const name = seriesLabel(seriesSel);
   return dated ? `${name} posted in this timeframe` : `${name}, latest numbers`;
 }
@@ -465,12 +480,7 @@ function selectionHeading() {
   return seriesLabel(seriesSel);
 }
 function describeSelection(rows) {
-  const eps = rows.filter(r => r.kind === "episode").length;
-  const vids = rows.filter(r => r.kind === "video").length;
-  if (seriesSel === "all") {
-    return `${plural(eps, "Interpreting Interpreter episode")} matched across platforms, plus ${plural(vids, "other video")}`;
-  }
-  if (seriesSel === "ii") return plural(eps, "episode");
+  if (seriesSel === "ii") return plural(rows.filter(r => r.kind === "episode").length, "episode");
   return plural(rows.length, "video");
 }
 
@@ -499,7 +509,6 @@ function listingAvailable() {
 function applyFilters() {
   document.getElementById("customDates").hidden = tfSel !== "custom";
   const listing = listingAvailable();
-  document.getElementById("otherOnly").hidden = listing;
   document.getElementById("postWeekSection").hidden = !listing;
   document.getElementById("newSection").hidden = !listing;
   document.getElementById("epTableSection").hidden = !listing;
@@ -507,10 +516,10 @@ function applyFilters() {
   platformCards();
   const rows = listing ? scopedRecords() : [];
   const tfTxt = timeframePhrase();
-  document.getElementById("filterSummary").innerHTML = `${esc(seriesLabel(seriesSel))} · ${esc(describeSelection(rows))} · <span class="nowrap">posted ${esc(tfTxt)}</span>`;
+  document.getElementById("filterSummary").innerHTML = `${esc(seriesLabel(seriesSel))} · ${esc(describeSelection(rows))} <span class="nowrap">· posted ${esc(tfTxt)}</span>`;
   document.getElementById("postHead").textContent = `(${selectionHeading()}, current views)`;
-  document.getElementById("epHead").textContent = seriesSel === "ii" ? "Episodes" : (seriesSel === "all" ? "All videos" : selectionHeading());
-  document.getElementById("newHead").textContent = seriesSel === "ii" ? "Newest episodes: early performance" : "Newest videos: early performance";
+  document.getElementById("epHead").textContent = episodeTerms() ? "Episodes" : (seriesSel === "all" ? "All videos" : selectionHeading());
+  document.getElementById("newHead").textContent = episodeTerms() ? "Newest episodes: early performance" : "Newest videos: early performance";
   document.getElementById("newNote").textContent =
     "Age is days since the first post date. Views per day uses that age. Change is views gained since the previous snapshot on platforms that already had a view count. A platform's first appearance is not growth (Instagram views were first collected on 2026-10-01).";
   if (selected && !rows.some(r => r.key === selected)) {
@@ -525,10 +534,9 @@ function applyFilters() {
 
 function platformCards() {
   const dated = isDated();
-  let stats, showSeriesSplit = false;
-  if (!dated && seriesSel === "all") { stats = D.platforms; showSeriesSplit = true; }
+  let stats;
+  if (!dated && seriesSel === "all") stats = D.platforms;
   else if (!dated && seriesSel === "ii") stats = Object.fromEntries(P.map(p => [p, seriesPlat(p)]));
-  else if (!dated && seriesSel === "other") stats = Object.fromEntries(P.map(p => [p, otherPlat(p)]));
   else if (!dated && seriesMeta(seriesSel) && seriesMeta(seriesSel).cs) stats = catPlatStats(seriesMeta(seriesSel).cs);
   else stats = episodePlatStats(scopedRecords());
   document.getElementById("cardHint").textContent = `(${cardScopePhrase()})`;
@@ -536,14 +544,11 @@ function platformCards() {
     const src = stats[p]; if (!src) return "";
     const m = k => has(p, k) ? fmt(src[k]) : '<span class="na">n/a</span>';
     const viewWord = metricName(p, "views");
-    const extra = showSeriesSplit ? `
-      <div class="kv"><span>Series videos</span><b>${fmt(src.series_videos)}</b></div>
-      <div class="kv"><span>Series ${viewWord}</span><b>${has(p, "views") ? fmt(src.series_views) : '<span class="na">n/a</span>'}</b></div>` : "";
     return `<div class="card" style="--c:${COLOR[p]}"><h3>${LABEL[p]}</h3>
       <div class="big">${has(p, "views") ? fmt(src.views) : '<span class="na">n/a</span>'}</div><div class="muted">${viewWord}</div>
       <div class="kv"><span>Videos</span><b>${fmt(src.videos)}</b></div>
       <div class="kv"><span>${metricName(p, "likes")}</span><b>${m("likes")}</b></div>
-      <div class="kv"><span>Comments</span><b>${m("comments")}</b></div>${extra}</div>`;
+      <div class="kv"><span>Comments</span><b>${m("comments")}</b></div></div>`;
   }).join("");
 }
 
@@ -633,20 +638,94 @@ function postWeekChart() {
 }
 
 function ageDays(e) { return e.first_posted ? Math.floor((new Date(D.last_snapshot) - new Date(e.first_posted + "T00:00")) / 864e5) : null; }
+// Heading rule: "episodes"/"Episode" only while the Interpreting Interpreter filter is active; every other view uses "videos"/"Title".
+function episodeTerms() { return seriesSel === "ii"; }
 function titleLinks(e, scrollName) {
   const href = esc(epHref(e.key));
   const key = esc(e.key);
-  const series = (seriesSel === "all" || seriesSel === "other") ? `<div class="tagline">${esc(e.content_series)}</div>` : "";
+  const series = seriesSel === "all" ? `<div class="tagline">${esc(displaySeries(e.content_series))}</div>` : "";
   return `<div class="titleline"><a class="iconlink" data-key="${key}" href="${href}" title="Show trend and post links" aria-label="Show trend and post links">↗</a>` +
     `<a class="namelink" data-key="${key}" href="${href}" title="${esc(e.name)}">${esc(e.name)}</a></div>${series}`;
 }
 
+function normTitle(s) {
+  return String(s ?? "").normalize("NFKC").toLowerCase()
+    .replace(/[\u2018\u2019]/g, "'").replace(/[\u201C\u201D]/g, '"')
+    .replace(/https?:\/\/\S+/g, " ").replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
+}
+function mergeTrends(recs) {
+  const byTime = new Map();
+  for (const r of recs) for (const t of r.trend || []) {
+    if (!byTime.has(t.time)) byTime.set(t.time, {time: t.time, platforms: {}, total_views: 0});
+    const dest = byTime.get(t.time);
+    for (const [p, m] of Object.entries(t.platforms || {})) {
+      if (dest.platforms[p]) continue;
+      dest.platforms[p] = m;
+      if (typeof m.views === "number") dest.total_views += m.views;
+    }
+  }
+  return [...byTime.values()].sort((a, b) => String(a.time).localeCompare(String(b.time)));
+}
+function mergeVideoGroup(recs) {
+  const platforms = {};
+  let totalViews = 0, totalLikes = 0, totalComments = 0;
+  let anyViews = false, anyLikes = false, anyComments = false;
+  let first = null, name = recs[0].name;
+  for (const r of recs) {
+    if ((r.name || "").length > (name || "").length) name = r.name;
+    if (r.first_posted && (!first || r.first_posted < first)) first = r.first_posted;
+    for (const p of P) {
+      const x = r.platforms[p];
+      if (!x || platforms[p]) continue;
+      platforms[p] = x;
+      if (typeof x.views === "number") { totalViews += x.views; anyViews = true; }
+      if (typeof x.likes === "number") { totalLikes += x.likes; anyLikes = true; }
+      if (typeof x.comments === "number") { totalComments += x.comments; anyComments = true; }
+    }
+  }
+  return {
+    key: "m:" + recs.map(r => r.key).sort().join("|"),
+    name, first_posted: first, platforms,
+    total_views: anyViews ? totalViews : null,
+    total_likes: anyLikes ? totalLikes : null,
+    total_comments: anyComments ? totalComments : null,
+    trend: mergeTrends(recs),
+    content_series: recs[0].content_series,
+    kind: "video",
+  };
+}
+// Newest rows are one video, with platforms as columns. Cross-platform posts share a normalized title.
+// A short or empty title is not merged: those captions are not unique enough to be the same video.
+let newestAgg = new Map();
+function oneRowPerVideo(recs) {
+  const groups = [];
+  const index = new Map();
+  for (const r of recs) {
+    const title = normTitle(r.name);
+    const plat = Object.keys(r.platforms)[0] || "";
+    if (r.kind === "episode" || title.length < 40) {
+      groups.push(r);
+      continue;
+    }
+    const mk = r.content_series + "\0" + title;
+    let list = index.get(mk);
+    if (!list) { list = []; index.set(mk, list); }
+    let g = list.find(x => !x.plats.has(plat));
+    if (!g) { g = {recs: [], plats: new Set()}; list.push(g); groups.push(g); }
+    g.recs.push(r);
+    g.plats.add(plat);
+  }
+  return groups.map(g => g.recs ? (g.recs.length === 1 ? g.recs[0] : mergeVideoGroup(g.recs)) : g);
+}
 function newTable() {
-  const recs = scopedRecords().filter(e => e.first_posted).sort((a, b) => b.first_posted.localeCompare(a.first_posted) || a.name.localeCompare(b.name)).slice(0, 8);
+  newestAgg = new Map();
+  const recs = oneRowPerVideo(scopedRecords().filter(e => e.first_posted))
+    .sort((a, b) => b.first_posted.localeCompare(a.first_posted) || a.name.localeCompare(b.name)).slice(0, 8);
+  recs.forEach(r => { if (!rowMap.has(r.key)) newestAgg.set(r.key, r); });
   const cols = P.filter(p => has(p, "views"));
   const changes = recs.map(e => snapshotChange(e.trend));
   const showChange = changes.some(ch => ch.value !== null);
-  document.getElementById("newTable").innerHTML = `<thead><tr><th class="l namecell">${seriesSel === "ii" ? "Episode" : "Title"}</th><th>First posted</th><th>Age (days)</th>${cols.map(p => `<th title="${esc(p === "x" ? "Impressions" : "Views")}">${LABEL[p]}${p === "x" ? " impr." : ""}</th>`).join("")}<th>Total views</th><th>Views per day</th>${showChange ? `<th title="Comparable view change since the previous snapshot. A platform's first appearance is excluded.">Change</th>` : ""}</tr></thead><tbody>` +
+  document.getElementById("newTable").innerHTML = `<thead><tr><th class="l namecell">${episodeTerms() ? "Episode" : "Title"}</th><th>First posted</th><th>Age (days)</th>${cols.map(p => `<th title="${esc(p === "x" ? "Impressions" : "Views")}">${LABEL[p]}${p === "x" ? " impr." : ""}</th>`).join("")}<th>Total views</th><th>Views per day</th>${showChange ? `<th title="Comparable view change since the previous snapshot. A platform's first appearance is excluded.">Change</th>` : ""}</tr></thead><tbody>` +
     recs.map((e, i) => {
       const a = ageDays(e);
       const total = typeof e.total_views === "number" ? e.total_views : null;
@@ -691,6 +770,8 @@ function renderToggles() {
 
 function epTable() {
   if (!D) return;
+  const nameCol = EPCOLS.find(c => c.k === "name");
+  if (nameCol) nameCol.l = episodeTerms() ? "Episode" : "Title";
   const q = document.getElementById("search").value.trim().toLowerCase();
   const cols = visibleCols();
   let col = cols.find(c => c.k === sortKey) || EPCOLS.find(c => c.k === sortKey) || cols[0];
@@ -730,7 +811,7 @@ function resetDetail() {
   document.getElementById("epLinks").innerHTML = "";
   if (epChart) { epChart.destroy(); epChart = null; }
 }
-function findRec(key) { return rowMap.get(key) || null; }
+function findRec(key) { return rowMap.get(key) || newestAgg.get(key) || null; }
 
 function selectEp(key, scroll) {
   const e = findRec(key);
@@ -748,7 +829,7 @@ function selectEp(key, scroll) {
   const posted = e.first_posted || "unknown";
   const views = typeof e.total_views === "number" ? e.total_views.toLocaleString() : "–";
   document.getElementById("epTitle").textContent = `${e.kind === "episode" ? "Episode" : "Video"} trend: ${e.name}`;
-  document.getElementById("epHint").textContent = `${e.content_series} · first posted ${posted} · total views ${views} · ${plural(n, "snapshot")}` +
+  document.getElementById("epHint").textContent = `${displaySeries(e.content_series)} · first posted ${posted} · total views ${views} · ${plural(n, "snapshot")}` +
     (n < 2 ? " (trend lines fill in as more snapshots are collected)" : "");
   const links = P.filter(p => e.platforms[p] && (e.platforms[p].urls || []).length).map(p =>
     e.platforms[p].urls.map((u, i) => `<a href="${esc(u)}" target="_blank" rel="noopener">${LABEL[p]}${e.platforms[p].urls.length > 1 ? " " + (i + 1) : ""}</a>`).join("")).join("");
