@@ -52,12 +52,23 @@
   .post-tip .swatch { width:10px; height:10px; border-radius:2px; flex:none; }
   .post-tip ul { margin:4px 0 0; padding-left:18px; }
   .filters { position:sticky; top:0; z-index:8; display:block; }
-  .filter-controls { display:flex; flex-wrap:wrap; gap:14px 20px; align-items:flex-end; }
-  .filter-controls > label, .dates label { display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--mute); font-weight:600; flex:1 1 200px; min-width:0; }
-  .filters select, .filters input[type=date] { font:inherit; font-weight:400; color:var(--ink); padding:7px 10px; border:1px solid var(--line); border-radius:6px; width:100%; max-width:320px; background:#fff; }
-  .dates { display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end; flex:2 1 280px; }
-  .dates label { flex:1 1 140px; }
-  #customDates[hidden] { display:none !important; }
+  .filter-controls { display:flex; flex-wrap:wrap; gap:14px 20px; align-items:flex-start; }
+  .filter-controls > label, .range-row > label { display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--mute); font-weight:600; min-width:0; }
+  .filter-controls > label { flex:1 1 180px; max-width:280px; }
+  .filters select, .filters input[type=date] { font:inherit; font-weight:400; color:var(--ink); padding:7px 10px; border:1px solid var(--line); border-radius:6px; width:100%; background:#fff; }
+  .range-filter { flex:2 1 480px; min-width:min(100%, 260px); }
+  .range-label { display:block; font-size:12px; color:var(--mute); font-weight:600; margin:0 0 4px; }
+  .range-row { display:flex; gap:10px; align-items:center; }
+  .range-row > label { flex:0 1 168px; }
+  .dual-col { flex:1 1 180px; min-width:120px; }
+  .dual { position:relative; height:44px; margin:0 16px; touch-action:none; user-select:none; }
+  .dual-line, .dual-fill { position:absolute; top:50%; height:6px; transform:translateY(-50%); border-radius:99px; pointer-events:none; }
+  .dual-line { left:0; right:0; background:#d5dee7; }
+  .dual-fill { background:var(--acc); }
+  .dual-thumb { position:absolute; top:50%; width:32px; height:32px; margin:0; padding:0; border:2px solid var(--acc); border-radius:50%; background:#fff; box-shadow:0 1px 3px rgba(29,39,51,.25); transform:translate(-50%, -50%); cursor:grab; touch-action:none; z-index:2; appearance:none; -webkit-appearance:none; }
+  .dual-thumb:focus-visible { outline:2px solid var(--acc); outline-offset:3px; }
+  .dual-thumb.dragging { cursor:grabbing; background:#e7f0f8; }
+  .dual-scale { display:flex; justify-content:space-between; gap:8px; margin:0 16px; font-size:11px; font-weight:400; color:var(--mute); }
   .filters .summary { margin:10px 0 0; font-weight:400; max-width:none; text-align:left; }
   .nowrap { white-space:nowrap; }
   .titleline { display:flex; align-items:center; gap:6px; width:280px; max-width:100%; }
@@ -72,8 +83,13 @@
   .toolbar { display:flex; flex-wrap:wrap; gap:8px 12px; align-items:center; margin:0 0 8px; }
   @media (max-width:800px) {
     header, main { padding-left:12px; padding-right:12px; }
-    .filters select, .filters input[type=date] { max-width:none; }
-    .filter-controls > label { flex-basis:100%; }
+    /* The range control is taller than the old dropdown; pinning it on a phone covers the chart. */
+    .filters { position:static; padding:10px 12px; }
+    .filters select, .filters input[type=date] { max-width:none; font-size:16px; min-width:0; }
+    .filter-controls > label, .range-filter { flex-basis:100%; max-width:none; }
+    .range-row { flex-wrap:wrap; }
+    .dual-col { order:-1; flex-basis:100%; }
+    .range-row > label { flex:1 1 calc(50% - 8px); max-width:calc(50% - 5px); }
     .titleline { width:calc(58vw - 36px); }
     #epTable .namecell, #newTable .namecell { max-width:58vw; }
   }
@@ -91,12 +107,25 @@
       <label>Series
         <select id="seriesSel"></select>
       </label>
-      <label>Timeframe
-        <select id="tfSel"></select>
-      </label>
-      <div id="customDates" class="dates" hidden>
-        <label>Posted from <input type="date" id="tfFrom"></label>
-        <label>Posted to <input type="date" id="tfTo"></label>
+      <div class="range-filter">
+        <span class="range-label" id="rangeLabel">Posted dates</span>
+        <div class="range-row">
+          <label>Posted from
+            <input type="date" id="tfFrom" aria-label="Posted from">
+          </label>
+          <div class="dual-col">
+            <div class="dual" id="dualRange" role="group" aria-label="Posted date range">
+              <div class="dual-line"></div>
+              <div class="dual-fill" id="rangeFill"></div>
+              <button type="button" class="dual-thumb" id="thumbMin" data-end="from" role="slider" aria-label="Posted from" aria-orientation="horizontal"></button>
+              <button type="button" class="dual-thumb" id="thumbMax" data-end="to" role="slider" aria-label="Posted to" aria-orientation="horizontal"></button>
+            </div>
+            <div class="dual-scale"><span id="scaleMin"></span><span id="scaleMax"></span></div>
+          </div>
+          <label>Posted to
+            <input type="date" id="tfTo" aria-label="Posted to">
+          </label>
+        </div>
       </div>
     </div>
     <p class="muted summary" id="filterSummary"></p>
@@ -104,13 +133,13 @@
 
   <section><h2>Totals by platform <span class="muted" style="font-weight:400" id="cardHint"></span></h2><div class="cards" id="platformCards"></div></section>
 
-  <section id="seriesSection"><h2>Views by series</h2><div class="scroll" style="max-height:none"><table id="groupTable" style="width:auto;min-width:640px"></table></div>
-    <p class="muted" id="seriesNote"></p></section>
-
   <section id="postWeekSection"><h2>Views by posting week, by platform <span class="muted" style="font-weight:400" id="postHead"></span></h2>
     <div style="position:relative;height:360px"><canvas id="postChart" style="max-height:none"></canvas></div>
     <div id="postTip" class="post-tip muted">Hover a week to see its videos and per-platform views.</div>
     <p class="muted" id="postNote"></p></section>
+
+  <section id="seriesSection"><h2>Views by series</h2><div class="scroll" style="max-height:none"><table id="groupTable" style="width:auto;min-width:640px"></table></div>
+    <p class="muted" id="seriesNote"></p></section>
 
   <section id="newSection"><h2 id="newHead">Newest: early performance</h2><div class="scroll" style="max-height:none"><table id="newTable"></table></div>
     <p class="muted" id="newNote"></p></section>
@@ -151,15 +180,11 @@ function metricName(p, m) {
   if (m === "comments") return "Comments";
   return m;
 }
-const TF = [
-  {id:"all", label:"All time"},
-  {id:"30d", label:"Last 30 days"},
-  {id:"90d", label:"Last 90 days"},
-  {id:"1y", label:"Last 12 months"},
-];
 let D, epChart, postChart;
 let SERIES = [];
-let seriesSel = "all", tfSel = "all", tfFrom = "", tfTo = "";
+let seriesSel = "all", tfFrom = "", tfTo = "";
+let rangeMinDate = "", rangeMaxDate = "", rangeDays = 0;
+let rangeBound = false, applyTimer = 0, applyQueued = false, appliedKey = "";
 let episodeRecs = [], videoRecs = [], rowMap = new Map();
 let sortKey = "tviews", sortDir = -1, selected = null;
 let hiddenGrps = new Set();
@@ -269,10 +294,19 @@ function readParams() {
   const s = q.get("series");
   // A series slug that is not in this export, including a retired label, is All videos.
   seriesSel = (s && SERIES.some(x => x.id === s)) ? s : "all";
+  computeRangeLimits();
   const t = q.get("tf") || "all";
-  tfFrom = q.get("from") || "";
-  tfTo = q.get("to") || "";
-  tfSel = t;
+  let from = q.get("from") || "";
+  let to = q.get("to") || "";
+  // Older links used a preset id (30d, 90d, 1y, or a calendar year) instead of explicit dates.
+  if (!from && !to && t !== "all" && t !== "custom") {
+    const b = legacyBounds(t);
+    if (b.from) from = b.from;
+    if (b.to) to = b.to;
+  }
+  tfFrom = from ? clampDate(from) : rangeMinDate;
+  tfTo = to ? clampDate(to) : rangeMaxDate;
+  if (tfFrom > tfTo) { const swap = tfFrom; tfFrom = tfTo; tfTo = swap; }
 }
 function writeParams() {
   const url = new URL(location.href);
@@ -282,11 +316,9 @@ function writeParams() {
   if (seriesSel === "all") {
     if (q.has("series") && q.get("series") !== "all") q.delete("series");
   } else q.set("series", seriesSel);
-  if (tfSel === "all") q.delete("tf"); else q.set("tf", tfSel);
-  if (tfSel === "custom") {
-    if (tfFrom) q.set("from", tfFrom); else q.delete("from");
-    if (tfTo) q.set("to", tfTo); else q.delete("to");
-  } else { q.delete("from"); q.delete("to"); }
+  q.delete("tf");
+  if (isFullRange()) { q.delete("from"); q.delete("to"); }
+  else { q.set("from", tfFrom); q.set("to", tfTo); }
   history.replaceState(null, "", url.pathname + url.search + url.hash);
 }
 function replaceUrl(hashKey) {
@@ -299,33 +331,61 @@ function epHref(key) {
   return url.pathname + url.search + "#ep=" + encodeURIComponent(key);
 }
 
-// Empty custom dates mean "all time" until both ends are filled in — never the word "null".
-function timeframeBounds() {
+// The slider spans every posting date in the export. The full span matches the old "All time" default:
+// undated rows stay included, and platform cards keep the snapshot totals.
+function computeRangeLimits() {
+  let min = "", max = "";
+  const consider = iso => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(iso || "")) return;
+    if (!min || iso < min) min = iso;
+    if (!max || iso > max) max = iso;
+  };
+  for (const e of D.episodes || []) consider(e.first_posted);
+  for (const v of D.videos || []) consider(v.posted);
+  if (!min) min = snapshotDay();
+  if (!max || max < min) max = min;
+  rangeMinDate = min;
+  rangeMaxDate = max;
+  rangeDays = daysBetween(min, max);
+}
+function daysBetween(a, b) {
+  return Math.round((new Date(b + "T00:00:00Z") - new Date(a + "T00:00:00Z")) / 864e5);
+}
+function clampDate(iso) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso || "")) return rangeMinDate;
+  if (iso < rangeMinDate) return rangeMinDate;
+  if (iso > rangeMaxDate) return rangeMaxDate;
+  return iso;
+}
+function dateToIndex(iso) {
+  return Math.max(0, Math.min(rangeDays, daysBetween(rangeMinDate, clampDate(iso))));
+}
+function indexToDate(i) {
+  return addDays(rangeMinDate, Math.max(0, Math.min(rangeDays, i)));
+}
+function prettyDate(iso) {
+  return new Date(iso + "T00:00:00Z").toLocaleDateString("en-US", {timeZone:"UTC", month:"short", day:"numeric", year:"numeric"});
+}
+function legacyBounds(t) {
   const end = snapshotDay();
-  if (tfSel === "all") return {from:null, to:null};
-  if (tfSel === "30d") return {from: addDays(end, -29), to:end};
-  if (tfSel === "90d") return {from: addDays(end, -89), to:end};
-  if (tfSel === "1y") return {from: addDays(end, -364), to:end};
-  if (/^\d{4}$/.test(tfSel)) return {from: tfSel + "-01-01", to: tfSel + "-12-31"};
-  if (tfSel === "custom") {
-    if (!tfFrom && !tfTo) return {from:null, to:null};
-    return {from: tfFrom || null, to: tfTo || null};
-  }
-  return {from:null, to:null};
+  if (t === "30d") return {from: addDays(end, -29), to: end};
+  if (t === "90d") return {from: addDays(end, -89), to: end};
+  if (t === "1y") return {from: addDays(end, -364), to: end};
+  if (/^\d{4}$/.test(t)) return {from: t + "-01-01", to: t + "-12-31"};
+  return {from: "", to: ""};
+}
+function isFullRange() {
+  return !!rangeMinDate && tfFrom <= rangeMinDate && tfTo >= rangeMaxDate;
+}
+function timeframeBounds() {
+  if (isFullRange()) return {from:null, to:null};
+  return {from: tfFrom || null, to: tfTo || null};
 }
 function timeframePhrase() {
-  const {from, to} = timeframeBounds();
-  if (tfSel === "custom" && !tfFrom && !tfTo) return "all time";
-  if (tfSel === "all" || (!from && !to)) return "all time";
-  if (from && to) return `${from} to ${to}`;
-  if (from) return `since ${from}`;
-  return `through ${to}`;
+  if (isFullRange() || !tfFrom || !tfTo) return "all time";
+  return `${tfFrom} to ${tfTo}`;
 }
-function isDated() {
-  if (tfSel === "all") return false;
-  if (tfSel === "custom" && !tfFrom && !tfTo) return false;
-  return true;
-}
+function isDated() { return !isFullRange(); }
 function inTimeframe(e) {
   const {from, to} = timeframeBounds();
   if (!from && !to) return true;
@@ -404,7 +464,7 @@ function renderSeriesTable() {
   let text = "Snapshot totals for the latest collection run, one row per content series, sorted by views. ";
   if (!shown.length) text += "Turn a platform on in the column toggles to see its views here. ";
   else text += `The total sums to overall views${hidden.length ? ` on ${shown.join(", ")}` : ""}. `;
-  text += "Not affected by the timeframe selector. ";
+  text += "Not affected by the posted-date range. ";
   text += seriesSel === "all" ? "Every series is listed. " : `Rows matching ${selectionHeading()} are highlighted. `;
   text += hidden.length ? `Turning a platform off in the column toggles removes it here (${hidden.join(", ")} off). ` : "Turning a platform off in the column toggles removes it here. ";
   text += "Views sum plays, X impressions, and background counts. Likes include Facebook reactions. A video that was not re-collected keeps its last count.";
@@ -444,26 +504,165 @@ function changeCell(ch) {
 
 function cardScopePhrase() {
   const dated = isDated();
-  if (seriesSel === "all") return dated ? "all videos posted in this timeframe" : "all videos, latest numbers";
-  if (seriesSel === "ii") return dated ? "Interpreting Interpreter episodes posted in this timeframe" : "Interpreting Interpreter episodes, latest numbers";
+  if (seriesSel === "all") return dated ? "all videos posted in this date range" : "all videos, latest numbers";
+  if (seriesSel === "ii") return dated ? "Interpreting Interpreter episodes posted in this date range" : "Interpreting Interpreter episodes, latest numbers";
   const name = seriesLabel(seriesSel);
-  return dated ? `${name} posted in this timeframe` : `${name}, latest numbers`;
+  return dated ? `${name} posted in this date range` : `${name}, latest numbers`;
 }
 
+function pctIndex(idx) {
+  if (!rangeDays) return 0;
+  return (idx / rangeDays) * 100;
+}
+function syncRangeUI() {
+  const fromEl = document.getElementById("tfFrom");
+  const toEl = document.getElementById("tfTo");
+  if (fromEl.value !== tfFrom) fromEl.value = tfFrom;
+  if (toEl.value !== tfTo) toEl.value = tfTo;
+  const a = dateToIndex(tfFrom), b = dateToIndex(tfTo);
+  const left = pctIndex(a), right = pctIndex(b);
+  const fill = document.getElementById("rangeFill");
+  fill.style.left = left + "%";
+  fill.style.width = Math.max(0, right - left) + "%";
+  const thumbMin = document.getElementById("thumbMin");
+  const thumbMax = document.getElementById("thumbMax");
+  thumbMin.style.left = left + "%";
+  thumbMax.style.left = right + "%";
+  const setAria = (el, idx, iso) => {
+    el.setAttribute("aria-valuemin", "0");
+    el.setAttribute("aria-valuemax", String(rangeDays));
+    el.setAttribute("aria-valuenow", String(idx));
+    el.setAttribute("aria-valuetext", prettyDate(iso));
+    el.title = prettyDate(iso);
+  };
+  setAria(thumbMin, a, tfFrom);
+  setAria(thumbMax, b, tfTo);
+  const minOnTop = a === b && a > rangeDays / 2;
+  if (!thumbMin.classList.contains("dragging") && !thumbMax.classList.contains("dragging")) {
+    thumbMin.style.zIndex = minOnTop ? "3" : "2";
+    thumbMax.style.zIndex = minOnTop ? "2" : "3";
+  }
+  document.getElementById("rangeLabel").textContent = isFullRange()
+    ? "Posted dates"
+    : `Posted dates · ${prettyDate(tfFrom)} – ${prettyDate(tfTo)}`;
+}
+function indexFromClientX(clientX) {
+  const rect = document.getElementById("dualRange").getBoundingClientRect();
+  const ratio = rect.width ? (clientX - rect.left) / rect.width : 0;
+  return Math.round(Math.min(1, Math.max(0, ratio)) * rangeDays);
+}
+function rangeKey() { return tfFrom + "\0" + tfTo + "\0" + seriesSel; }
+function scheduleApply() {
+  if (applyTimer) { applyQueued = true; return; }
+  applyFilters();
+  applyTimer = setTimeout(() => {
+    applyTimer = 0;
+    if (applyQueued) { applyQueued = false; scheduleApply(); }
+  }, 100);
+}
+function flushApply() {
+  clearTimeout(applyTimer);
+  applyTimer = 0;
+  applyQueued = false;
+  if (rangeKey() === appliedKey) return;
+  applyFilters();
+}
+function setRangeEnd(which, idx) {
+  idx = Math.max(0, Math.min(rangeDays, idx));
+  let from = dateToIndex(tfFrom), to = dateToIndex(tfTo);
+  if (which === "from") from = Math.min(idx, to);
+  else to = Math.max(idx, from);
+  const nextFrom = indexToDate(from), nextTo = indexToDate(to);
+  if (nextFrom === tfFrom && nextTo === tfTo) return;
+  tfFrom = nextFrom;
+  tfTo = nextTo;
+  syncRangeUI();
+  writeParams();
+  scheduleApply();
+}
+function onDateField(which) {
+  const el = document.getElementById(which === "from" ? "tfFrom" : "tfTo");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(el.value)) return;
+  const next = clampDate(el.value);
+  if (which === "from" && next === tfFrom) return;
+  if (which === "to" && next === tfTo) return;
+  if (which === "from") tfFrom = next; else tfTo = next;
+  if (tfFrom > tfTo) { const swap = tfFrom; tfFrom = tfTo; tfTo = swap; }
+  syncRangeUI();
+  writeParams();
+  flushApply();
+}
+function onThumbKey(ev, which) {
+  const step = ev.shiftKey ? 7 : 1;
+  const cur = dateToIndex(which === "from" ? tfFrom : tfTo);
+  let idx = null;
+  if (ev.key === "ArrowRight" || ev.key === "ArrowUp") idx = cur + step;
+  else if (ev.key === "ArrowLeft" || ev.key === "ArrowDown") idx = cur - step;
+  else if (ev.key === "PageUp") idx = cur + 30;
+  else if (ev.key === "PageDown") idx = cur - 30;
+  else if (ev.key === "Home") idx = which === "from" ? 0 : dateToIndex(tfFrom);
+  else if (ev.key === "End") idx = which === "from" ? dateToIndex(tfTo) : rangeDays;
+  else return;
+  ev.preventDefault();
+  setRangeEnd(which, idx);
+  flushApply();
+}
+function bindRange() {
+  if (rangeBound) return;
+  rangeBound = true;
+  const dual = document.getElementById("dualRange");
+  let drag = null;
+  const mark = (which, on) => {
+    const el = document.getElementById(which === "from" ? "thumbMin" : "thumbMax");
+    el.classList.toggle("dragging", on);
+    if (on) el.style.zIndex = "4";
+  };
+  dual.addEventListener("pointerdown", ev => {
+    if (ev.button !== undefined && ev.button !== 0) return;
+    const thumb = ev.target.closest(".dual-thumb");
+    const idx = indexFromClientX(ev.clientX);
+    const which = thumb ? thumb.dataset.end
+      : (Math.abs(idx - dateToIndex(tfFrom)) <= Math.abs(idx - dateToIndex(tfTo)) ? "from" : "to");
+    drag = which;
+    dual.setPointerCapture(ev.pointerId);
+    mark(which, true);
+    document.getElementById(which === "from" ? "thumbMin" : "thumbMax").focus({preventScroll:true});
+    if (!thumb) setRangeEnd(which, idx);
+  });
+  dual.addEventListener("pointermove", ev => {
+    if (!drag || !dual.hasPointerCapture(ev.pointerId)) return;
+    setRangeEnd(drag, indexFromClientX(ev.clientX));
+  });
+  const endDrag = ev => {
+    if (!drag) return;
+    if (ev && ev.pointerId !== undefined && dual.hasPointerCapture(ev.pointerId)) dual.releasePointerCapture(ev.pointerId);
+    mark(drag, false);
+    drag = null;
+    syncRangeUI();
+    flushApply();
+  };
+  dual.addEventListener("pointerup", endDrag);
+  dual.addEventListener("pointercancel", endDrag);
+  document.getElementById("thumbMin").addEventListener("keydown", ev => onThumbKey(ev, "from"));
+  document.getElementById("thumbMax").addEventListener("keydown", ev => onThumbKey(ev, "to"));
+  const fromEl = document.getElementById("tfFrom"), toEl = document.getElementById("tfTo");
+  fromEl.addEventListener("change", () => onDateField("from"));
+  toEl.addEventListener("change", () => onDateField("to"));
+  fromEl.addEventListener("input", () => onDateField("from"));
+  toEl.addEventListener("input", () => onDateField("to"));
+}
 function setupFilters() {
-  const years = [...new Set(episodeRecs.concat(videoRecs).map(e => (e.first_posted || "").slice(0, 4)).filter(y => /^\d{4}$/.test(y)))].sort();
-  const tfOpts = [...TF, ...years.map(y => ({id:y, label:y})), {id:"custom", label:"Custom range"}];
-  if (!tfOpts.some(o => o.id === tfSel)) tfSel = "all";
-  const ss = document.getElementById("seriesSel"), ts = document.getElementById("tfSel");
+  const ss = document.getElementById("seriesSel");
   ss.innerHTML = SERIES.map(s => `<option value="${esc(s.id)}">${esc(s.label)}</option>`).join("");
-  ts.innerHTML = tfOpts.map(s => `<option value="${s.id}">${s.label}</option>`).join("");
-  ss.value = seriesSel; ts.value = tfSel;
-  document.getElementById("tfFrom").value = tfFrom;
-  document.getElementById("tfTo").value = tfTo;
+  ss.value = seriesSel;
   ss.onchange = () => { seriesSel = ss.value; writeParams(); applyFilters(); };
-  ts.onchange = () => { tfSel = ts.value; writeParams(); applyFilters(); };
-  document.getElementById("tfFrom").onchange = ev => { tfFrom = ev.target.value; writeParams(); applyFilters(); };
-  document.getElementById("tfTo").onchange = ev => { tfTo = ev.target.value; writeParams(); applyFilters(); };
+  const fromEl = document.getElementById("tfFrom"), toEl = document.getElementById("tfTo");
+  fromEl.min = toEl.min = rangeMinDate;
+  fromEl.max = toEl.max = rangeMaxDate;
+  document.getElementById("scaleMin").textContent = prettyDate(rangeMinDate);
+  document.getElementById("scaleMax").textContent = prettyDate(rangeMaxDate);
+  syncRangeUI();
+  bindRange();
 }
 
 function selectionHeading() {
@@ -497,7 +696,7 @@ function listingAvailable() {
 }
 
 function applyFilters() {
-  document.getElementById("customDates").hidden = tfSel !== "custom";
+  appliedKey = rangeKey();
   const listing = listingAvailable();
   document.getElementById("postWeekSection").hidden = !listing;
   document.getElementById("newSection").hidden = !listing;
@@ -605,7 +804,7 @@ function postWeekChart() {
   };
   tip.onclick = ev => { const a = ev.target.closest("a[data-key]"); if (a) { ev.preventDefault(); selectEp(a.dataset.key, true); } };
   postChart = new Chart(document.getElementById("postChart"), {type:"bar", data:{labels, datasets:ds},
-    options:{responsive:true, maintainAspectRatio:false, interaction:{mode:"index", intersect:false},
+    options:{responsive:true, maintainAspectRatio:false, animation:false, interaction:{mode:"index", intersect:false},
       scales:{x:{stacked:true, ticks:{autoSkip:true, maxRotation:0}, title:{display:true, text:"Posting week (labelled by its Friday)"}},
               y:{stacked:true, beginAtZero:true, ticks:{callback:v => v.toLocaleString()}, title:{display:true, text:"Current views"}}},
       plugins:{tooltip:{enabled:false, external: ({tooltip: t}) => {
